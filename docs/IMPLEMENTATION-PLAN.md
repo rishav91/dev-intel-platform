@@ -31,13 +31,13 @@ or backfill; only `work_item` table exists.
 
 **Goal:** prove the Phase 0 exit criteria on a real machine before adding anything.
 
-- [ ] `make tidy` — resolve deps, generate `go.sum`. Fix any version drift in `go.mod`.
-- [ ] `make build && make vet` — fix compile/vet errors (the scaffold was authored without a local toolchain).
-- [ ] `make up` — stack healthy (Redpanda, Postgres/Citus, Redis, SeaweedFS); confirm migrations applied.
-- [ ] Run `normalizer` + `webhook-gateway`; `make send-sample`.
-- [ ] Verify the `acme/app #482` row lands, scoped to the seeded tenant; same `trace_id` in both service logs.
-- [ ] `make test-isolation` passes (RLS gate green).
-- [ ] Commit a known-good baseline + tag.
+- [x] `make tidy` — resolve deps, generate `go.sum`. Fix any version drift in `go.mod`.
+- [x] `make build && make vet` — fix compile/vet errors (the scaffold was authored without a local toolchain).
+- [x] `make up` — stack healthy (Redpanda, Postgres/Citus, Redis, SeaweedFS); confirm migrations applied.
+- [x] Run `normalizer` + `webhook-gateway`; `make send-sample`.
+- [x] Verify the `acme/app #482` row lands, scoped to the seeded tenant; same `trace_id` in both service logs.
+- [x] `make test-isolation` passes (RLS gate green).
+- [x] Commit a known-good baseline + tag (`m0-walking-skeleton`).
 
 **Done when:** a signed sample webhook becomes a tenant-scoped `work_item`, the isolation test
 passes, and CI is green. (Phase 0 exit: FR-1.1–1.4, FR-2.1–2.5, NFR-7.2)
