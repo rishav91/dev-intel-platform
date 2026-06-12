@@ -1,0 +1,21 @@
+# OS / editor
+.DS_Store
+
+# Secrets / local env (.env.example is committed)
+.env
+.env.*
+!.env.example
+
+# Go build output
+/bin/
+*.test
+coverage.out
+
+# Python (AI/ML services)
+__pycache__/
+*.py[cod]
+.venv/
+
+# Local data volumes / logs
+/data/
+*.log
