@@ -26,32 +26,39 @@ When adding any metric, classify its inputs against this table first. Excluded =
 
 | Doc | Purpose |
 |-----|---------|
-| `docs/PRD.md` | Problem, personas, the seven insight pillars, signal-confidence scope, success metrics. |
+| `docs/PRD.md` | Problem, personas, the insight pillars (4 core + 3 staged), signal-confidence scope, success metrics. |
 | `docs/ARCHITECTURE.md` | System design: ingestion, intra-GitHub correlation + identity resolution, CQRS, persistence, scale, diagrams. |
 | `docs/AI-ARCHITECTURE.md` | AI subsystem: funnel, RAG, risk scoring, AI-authorship impact, governance, telemetry. |
 | `docs/DATA-MODEL.md` | Canonical schema, GitHub event mapping, entity graph, identity resolution, storage. |
-| `docs/STATE-MACHINE.md` | Work-item stage FSM + transition table; spine of all flow/bottleneck metrics. |
+| `docs/STATE-MACHINE.md` | Work-item stage FSM (precedence-based) + transition table; spine of all flow/bottleneck metrics. |
+| `docs/METRIC-SPEC.md` | Exact metric formulas, exclusions, confidence flags, minimum sample thresholds. |
+| `docs/METRICS-ETHICS.md` | Contributor-analytics ethics posture, k-anonymity suppression, individual opt-down, "won't build" list. |
+| `docs/GITHUB-APP.md` | Required GitHub App permissions/events, degraded behavior, capability-gated metric gating. |
 | `docs/API-CONTRACTS.md` | Webhook intake, GraphQL insight queries, AI/chat, internal gRPC. |
 | `docs/ADRs.md` | Decision records incl. single-source/source-agnostic, signal-confidence, consistency & idempotency. |
 | `docs/ROADMAP.md` | MVP-first phased build sequence. |
 | `docs/REPO-LAYOUT.md` | Proposed monorepo / service structure. |
+| `docs/REVIEW-ACTIONS.md` | Tracked doc-change checklist from the product/architecture critique. |
 | `docs/requirements/system-requirements.md` | Prioritized functional/non-functional requirements (P0/P1/P2). |
 | `docs/requirements/nfr-and-capacity.md` | Consolidated NFRs with derivations + capacity/storage sizing. |
 | `docs/requirements/ai-layer-requirements.md` | Detailed AI requirements with acceptance criteria. |
 
 **Reading order:** PRD → ARCHITECTURE → DATA-MODEL → AI-ARCHITECTURE → ADRs → ROADMAP → REPO-LAYOUT.
 
-## The seven insight pillars (all on STRONG signals)
+## The insight pillars (four core P0 + three staged; all on STRONG signals)
 
+**Core pillars (P0 MVP):**
 1. **PR flow & bottlenecks** — cycle-time decomposition, review wait, idle time, stuck/stale PRs.
 2. **Code review health** — review depth, rubber-stamping, PR size vs. outcome, self-merge risk, hotspot files.
 3. **CI reliability** — check pass rate, time-to-green, flaky-check detection.
 4. **Recurring blockers** — stuck PRs, flaky CI, rework loops, reopened items, clustered failure themes (AI).
-5. **Contributor & collaboration** — identity resolution, collaboration graph, knowledge concentration / bus factor, load signals.
-6. **Change risk & prediction** (AI) — PR revert/incident-risk scoring.
-7. **AI-authorship impact** (AI) — detect AI-generated PRs, correlate with rework/revert.
 
-**Explicitly excluded:** delivery divergence / planned-vs-actual and all Projects v2 / Milestones metrics (thin signal).
+**Staged pillars:**
+5. **Contributor & collaboration** *(P1)* — identity resolution, collaboration graph, knowledge concentration / bus factor, load signals. Governed by `METRICS-ETHICS.md`.
+6. **Change risk** *(P1, AI)* — PR **revert-risk** scoring; the **incident** half is capability-gated on integrated deploy/incident signals (GitHub lacks incident ground truth).
+7. **AI-authorship impact** *(P2, opt-in/experimental)* — declared/labelled AI-generated PRs correlated with rework/revert; low-recall from trailers alone.
+
+Define metrics against `METRIC-SPEC.md` (formula + exclusions + min sample). **Explicitly excluded:** delivery divergence / planned-vs-actual and all Projects v2 / Milestones metrics (thin signal).
 
 ## Locked reference stack
 

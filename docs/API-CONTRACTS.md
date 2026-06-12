@@ -23,7 +23,7 @@ Body: GitHub webhook payload
 ```
 POST   /api/v1/connectors/github            # begin GitHub App install flow
 GET    /api/v1/connectors/github            # status, rate-budget, detected capabilities
-POST   /api/v1/connectors/github/backfill   # resumable backfill (GH Archive + API) via Temporal
+POST   /api/v1/connectors/github/backfill   # resumable API backfill via Temporal (GH Archive only for public repos)
 DELETE /api/v1/connectors/github            # disconnect + schedule data purge
 ```
 `GET` returns detected capabilities (e.g. `{ "deployments": true, "releases": false }`) so the UI shows only metrics whose signals exist (signal-confidence gating).

@@ -1,0 +1,177 @@
+# Implementation Plan — through Phase 1
+
+Task-level plan picking up from the Phase 0 walking skeleton. Covers: **M0** green/run the
+skeleton, **M0.5** Phase-0 hardening, then **Phase 1** (full GitHub ingestion + correlation +
+identity resolution). Beyond Phase 1, see `ROADMAP.md`.
+
+Each task notes acceptance criteria and the requirement IDs it satisfies. `[ ]` = todo.
+
+---
+
+## Current state (what the scaffold gives us)
+
+Built: local stack (`docker-compose.dev.yml`), `work_item` migration + RLS + seed, canonical
+event schema, libs (`events`, `tenancy`, `connector`+`github`, `kafka`, `observability`),
+`webhook-gateway` + `normalizer`, red-team RLS test, CI, Makefile, sample webhook.
+
+Not yet done: never compiled/run; only `pull_request` events; no enrichment, identity, graph,
+or backfill; only `work_item` table exists.
+
+---
+
+## M0 — Green the skeleton (verification first)
+
+**Goal:** prove the Phase 0 exit criteria on a real machine before adding anything.
+
+- [ ] `make tidy` — resolve deps, generate `go.sum`. Fix any version drift in `go.mod`.
+- [ ] `make build && make vet` — fix compile/vet errors (the scaffold was authored without a local toolchain).
+- [ ] `make up` — stack healthy (Redpanda, Postgres/Citus, Redis, MinIO); confirm migrations applied.
+- [ ] Run `normalizer` + `webhook-gateway`; `make send-sample`.
+- [ ] Verify the `acme/app #482` row lands, scoped to the seeded tenant; same `trace_id` in both service logs.
+- [ ] `make test-isolation` passes (RLS gate green).
+- [ ] Commit a known-good baseline + tag.
+
+**Done when:** a signed sample webhook becomes a tenant-scoped `work_item`, the isolation test
+passes, and CI is green. (Phase 0 exit: FR-1.1–1.4, FR-2.1–2.5, NFR-7.2)
+
+---
+
+## M0.5 — Phase-0 hardening
+
+Small foundation-completing tasks before breadth.
+
+- [ ] **Raw archive to S3/MinIO.** Gateway (or a tiny archiver consumer) writes every `raw.github`
+      payload to MinIO keyed `tenant/date/delivery`. Enables replay (ADR-010). *(FR-2.4)*
+- [ ] **Delivery-id dedup.** Explicit idempotency on `X-GitHub-Delivery` (processed-deliveries
+      table or Redis set) so redeliveries are provably no-ops, not just upsert-absorbed. *(FR-2.2, ADR-010)*
+- [ ] **Dead-letter + retry.** Normalizer routes permanently-bad messages to a DLQ topic; transient
+      failures retry with backoff. *(AI/ingest robustness)*
+- [ ] **Unit tests.** `connector/github` normalization (table-driven over fixture payloads);
+      `tenancy.WithTenant` behavior. No infra needed.
+- [ ] **Config + graceful shutdown.** Centralize env config; ensure both services drain on SIGTERM.
+- [ ] **OTel (optional now).** Swap the slog trace-id for real OpenTelemetry spans exported via OTLP
+      (the seam is isolated in `libs/go/observability`). Defer if it slows momentum. *(NFR-7.2)*
+
+**Done when:** raw events are archived + replayable, redeliveries are idempotent, and unit tests cover the spine.
+
+---
+
+## Phase 1 — Ingestion depth + correlation + identity
+
+Ordered by dependency. **P1.A is a prerequisite for everything else.**
+
+### P1.A — Schema + GitHub App foundation
+- [ ] **Migrations for the rest of the write model** with RLS (FORCE) on each: `review`,
+      `check_run`, `contributor`, `identity_link`, `state_transition`, `entity_edge` (schemas in
+      `DATA-MODEL.md`). Add the red-team test to cover each new table. *(FR-3.1)*
+- [ ] **GitHub App installation auth.** Mint app JWT (signed with the App private key from Vault),
+      exchange for short-lived installation access tokens, cache + refresh per installation. *(NFR-6.2)*
+- [ ] **Rate-limit budgeting.** Per-installation token bucket tracking REST remaining + GraphQL
+      point cost; back off on `X-RateLimit-Remaining`. *(FR-2.3)*
+- [ ] **Capability detection.** On connect/first sync, detect whether a repo emits
+      deployments/releases; persist per-tenant capability flags (gates DORA). *(FR-2.10)*
+
+**Done when:** all canonical entities have tables + RLS, and the connector can authenticate and
+call the GitHub API within budget.
+
+### P1.B — Full event coverage
+Extend `connector/github` + `normalizer` from PR-only to the full STRONG signal set.
+- [ ] Add canonical event types + payloads: `review.submitted`, `comment.added`, `commit.observed`,
+      `work_item.*` for issues, `check.completed`. *(update `schemas/events`)*
+- [ ] Handle webhooks: `pull_request_review`, `pull_request_review_comment`, `issue_comment`,
+      `push`, `issues`, `check_run`/`check_suite`/`status`. Map each to canonical + persist
+      (`review`, `check_run`, work items for issues). *(FR-2.1, FR-2.5)*
+- [ ] Idempotent upserts on each new entity (keys per `DATA-MODEL.md`). *(ADR-010)*
+
+**Done when:** a repo's PRs, reviews, comments, commits, issues, and checks all land as canonical
+entities, tenant-scoped.
+
+### P1.C — GraphQL enrichment (`connector-github` service)
+Webhooks omit fields we need (e.g. `changed_files`, full diffs context).
+- [ ] Stand up `services/connector-github`: consume `raw.github`, enrich via GraphQL (batched),
+      emit enriched events to `normalizer`. Respects the rate budget from P1.A. *(FR-2.1)*
+- [ ] Backfill-vs-live ordering: stamp `occurred_at` from source, not arrival.
+
+**Done when:** enriched PRs carry size/review metadata the raw webhook lacked.
+
+### P1.D — State-transition derivation
+Implement the `STATE-MACHINE.md` FSM.
+- [ ] Derive `state_transition` rows from event timelines (per the transition table); compute
+      `idle_before` and time-in-stage. *(FR-4.1 inputs)*
+- [ ] Emit `agg.cycle_time` / `agg.idle_time` events for downstream projectors (Phase 2).
+- [ ] **Engine choice:** start in **Kafka Streams** (simpler ops) per ADR-005; migrate hot paths
+      to Flink if/when state size demands. Keep the job logic engine-agnostic where feasible.
+
+**Done when:** every work item has an ordered, replayable transition timeline with idle/cycle computed.
+
+### P1.E — Correlation: entity graph
+- [ ] Build `entity_edge` links: PR↔commits (PR commit list), PR↔issue (`closes #`, `Refs:`
+      trailers, timeline cross-refs), commit↔check (head SHA), review↔PR. Confidence-scored. *(FR-3.2, FR-3.4)*
+- [ ] Deterministic + re-runnable (replay rebuilds identical edges). *(NFR-3.5, ADR-010)*
+
+**Done when:** querying a PR returns its linked commits, issue(s), reviews, and checks.
+
+### P1.F — Contributor identity resolution
+- [ ] Resolve actors across commit emails, GitHub logins, and noreply addresses into a stable
+      `contributor_id`; populate `identity_link` with confidence; classify bots (`[bot]`, known apps). *(FR-3.3)*
+- [ ] Deterministic joins first (login, noreply→login), then fuzzy (shared verified email);
+      low-confidence merges flagged for later override. *(FR-3.4)*
+
+**Done when:** one human is unified across multiple emails/logins; bots are flagged and excluded
+from human metrics.
+
+### P1.G — API backfill (Temporal)
+- [ ] Add Temporal to the stack + a `backfill` workflow: crawl a tenant's repo history via the
+      **REST/GraphQL API** (the source of truth for private repos), feed the same normalizer path.
+      Resumable + checkpointed; respects the P1.A rate budget. *(FR-2.6, FR-2.7)*
+- [ ] Idempotent against live ingestion (backfill + webhooks converge, no double-count). *(ADR-010)*
+- [ ] **GH Archive is optional and public-only**: for *public* tenant repos (or demo/benchmark/
+      synthetic-scale data), load from GH Archive to accelerate the crawl, reconciled against API
+      truth. It carries only the public timeline, so it is never the path for private repos.
+
+**Done when:** onboarding a repo backfills its history via the rate-budgeted API without exhausting
+limits, and backfilled + live data are consistent.
+
+### P1.H — Cross-cutting (ongoing)
+- [ ] **Replay test:** drop the graph/identity state, replay the log, assert identical rebuild. *(ADR-010)*
+- [ ] **Correctness tests:** golden fixtures for correlation (known PR↔issue links) and identity
+      resolution (known multi-email contributor).
+- [ ] **Connector health + token refresh alerts.** *(FR-2.8)*
+- [ ] Extend CI: spin up Redpanda + Postgres, run an end-to-end ingest→graph integration test.
+
+**Phase 1 exit (ROADMAP):** PRs link to their commits/issues/checks; a contributor is unified
+across emails/logins; bots flagged. (FR-2.6–2.10, FR-3.1–3.5)
+
+---
+
+## Suggested sequence
+
+```mermaid
+flowchart LR
+    M0["M0 green skeleton"] --> M05["M0.5 hardening"]
+    M05 --> A["P1.A schema + App auth"]
+    A --> B["P1.B event coverage"]
+    A --> G["P1.G backfill"]
+    B --> C["P1.C enrichment"]
+    B --> D["P1.D transitions"]
+    B --> E["P1.E graph"]
+    B --> F["P1.F identity"]
+    D --> H["P1.H tests/replay"]
+    E --> H
+    F --> H
+```
+
+## Key decisions to make as you go
+
+- **Kafka Streams vs Flink (P1.D/E).** Start Streams to avoid Flink ops early; revisit when state
+  grows (ADR-005). Don't stand up Flink before you feel the pain.
+- **Enrichment placement (P1.C).** Separate `connector-github` service (per REPO-LAYOUT) vs. folding
+  into the normalizer. Separate is cleaner for rate-budget isolation; costs one more deployable.
+- **Identity confidence threshold (P1.F).** Where to auto-merge vs. flag for review — start
+  conservative; over-merging two people is worse than under-merging.
+
+## Definition of done (Phase 1)
+
+A tenant connects a GitHub org → history backfills → live events flow → PRs/issues/reviews/commits/
+checks are persisted, correlated into a graph, and attributed to resolved contributors — all
+tenant-isolated, idempotent, and replayable. That's the substrate Phase 2 projects into dashboards.

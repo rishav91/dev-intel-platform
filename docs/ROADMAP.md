@@ -2,6 +2,10 @@
 
 Full system, sequenced so the **P0 slice is a coherent first product**. Each phase has an exit criterion. Map work to requirement IDs in `requirements/`.
 
+> **Stack is phased in, not stood up all at once.** NFR-8.1 lists the *P0-complete target*
+> persistence set; each phase below adds only what it needs. Phase 0 = Kafka + Postgres/Citus +
+> Redis + MinIO(S3); ClickHouse/OpenSearch land in Phase 2, vectors in Phase 3.
+
 ## Phase 0 — Foundations (walking skeleton)
 **Goal:** one GitHub event flows end-to-end through the spine.
 - Monorepo + CI + local stack (docker-compose: Kafka, Postgres+Citus, Redis, MinIO).
@@ -13,7 +17,7 @@ Full system, sequenced so the **P0 slice is a coherent first product**. Each pha
 ## Phase 1 — Ingestion depth + correlation + identity
 **Goal:** complete GitHub ingestion, correlated, with resolved contributors.
 - Full event coverage (PR/review/comment/commit/issue/check); GraphQL detail fetches; rate-limit budgeting; idempotent dedup.
-- **GH Archive backfill** (Temporal) + API reconciliation; capability detection (deployments/releases).
+- **API backfill** (Temporal, rate-budgeted, resumable) as the tenant-history source of truth; **GH Archive** optional for public-repo/demo/benchmark data only (not private repos); capability detection (deployments/releases).
 - Intra-GitHub entity graph (commit→PR→issue→review→check) + **contributor identity resolution** with confidence (Flink, or Kafka Streams to start per ADR-005).
 - State-transition + cycle/idle/CI aggregations.
 **Exit:** PRs link to their commits/issues/checks; a contributor is unified across emails/logins; bots flagged. (FR-2.6–2.10, FR-3.1–3.5)

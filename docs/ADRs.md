@@ -9,7 +9,7 @@ Each ADR: context → decision → alternatives → consequences. Reference by I
 - ADR-004 — Tenant isolation: Citus sharding + Postgres RLS
 - ADR-005 — Stream processing engine: Apache Flink (graph + identity)
 - ADR-006 — Vector store: pgvector → Qdrant
-- ADR-007 — Workflow orchestration: Temporal (+ GH Archive backfill)
+- ADR-007 — Workflow orchestration: Temporal (API backfill; GH Archive public-only)
 - ADR-008 — Model gateway & portability: LiteLLM + vLLM
 - ADR-009 — Analytical read store: ClickHouse
 - ADR-010 — Consistency model & idempotency contract
@@ -88,15 +88,15 @@ Each ADR: context → decision → alternatives → consequences. Reference by I
 
 ---
 
-## ADR-007 — Workflow orchestration: Temporal (+ GH Archive backfill)
+## ADR-007 — Workflow orchestration: Temporal (API backfill; GH Archive public-only)
 
-**Context.** Backfills are long-running and resumable; **GH Archive bulk history** + API reconciliation is multi-step; deletion (purge across stores incl. vectors) is a saga.
+**Context.** Backfills are long-running and resumable; deletion (purge across stores incl. vectors) is a saga; multi-step inference orchestration. **Correction (2026-06 review):** an earlier draft positioned **GH Archive as the bulk-history backfill path**. GH Archive records only the *public* GitHub event timeline, so it **cannot back-fill private/tenant repos** — the commercial case. For a multi-tenant GitHub App, the **REST/GraphQL API is the source of truth** for tenant history; GH Archive is useful only for public-repo/OSS tenants, demo data, benchmarking, and synthetic-scale testing.
 
-**Decision.** **Temporal** for backfill (GH Archive load + API reconcile), deletion sagas, and multi-step inference orchestration. Durable execution, checkpointing, retries, visibility.
+**Decision.** **Temporal** for: (1) **API backfill** — a rate-budgeted, resumable, checkpointed crawl of a tenant's repo history via REST/GraphQL, the source of truth; (2) **optional public-data acceleration** — for public repos or demo/benchmark sets, load GH Archive and reconcile against API truth; (3) deletion sagas; (4) multi-step inference orchestration. Durable execution, checkpointing, retries, visibility.
 
-**Alternatives.** (a) Cron + bespoke state — fragile. (b) Step Functions — AWS lock-in (violates portability). (c) Airflow — batch/DAG, not event-triggered long-lived per-entity workflows.
+**Alternatives.** (a) Cron + bespoke state — fragile. (b) Step Functions — AWS lock-in (violates portability). (c) Airflow — batch/DAG, not event-triggered long-lived per-entity workflows. (d) GH Archive as primary backfill — **rejected**: blind to private repos.
 
-**Consequences.** + Resumable, observable, crash-safe. − Another stateful service; workflow-as-code learning curve.
+**Consequences.** + Resumable, observable, crash-safe; backfill correctness doesn't depend on a repo being public. − Another stateful service; workflow-as-code learning curve. − API backfill is bounded by GitHub's rate limits (REST 5k req/h/install, GraphQL 5k points/h), so onboarding a large org's history is paced by the rate budget, not raw throughput — size and alert there (see `nfr-and-capacity.md`).
 
 ---
 

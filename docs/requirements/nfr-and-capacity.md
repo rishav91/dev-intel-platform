@@ -4,18 +4,38 @@ Consolidated non-functional requirements with **derivations** (not platitudes), 
 back-of-envelope capacity/storage sizing. Single citable source; the scattered SLOs in PRD §7,
 ARCHITECTURE §6, and CLAUDE.md defer to this.
 
-**Scale inputs:** 100k DAU, 5k tenants (~20 users/tenant), GitHub-only, OSS/portable.
+**Scale inputs:** 100k DAU, 5k tenants (~20 users/tenant *mean — heavily skewed*), GitHub-only,
+OSS/portable. **Do not size on the mean:** load is dominated by a small number of **whale tenants**
+(see §1a). Size by per-tenant drivers (repos, PRs/day, check-runs/day, retained history, CI-log
+volume, GraphQL point budget), modeled per cohort.
 
 ## 1. Throughput
 
 | Metric | Target | Derivation |
 |--------|--------|------------|
 | Interactive chat | ~0.6 QPS avg, ~10 QPS peak | ~10% of DAU chat × ~5 q/day ≈ 50k q/day ÷ 86,400s ≈ 0.58 avg; peak ≈ 10× over the busy ~10% of the day. |
-| GitHub ingest events | ~10²–10³ events/sec | ~5k tenants × ~2k events/day ≈ 10M/day ÷ 86,400 ≈ 116/s avg; bursty to ~10³/s. **Binding constraint is GitHub's API rate limit (REST 5k req/h/install; GraphQL 5k points/h), not our compute** — hence webhook-first + GraphQL batching + GH Archive for bulk history. |
+| GitHub ingest events | ~10²–10³ events/sec | ~5k tenants × ~2k events/day ≈ 10M/day ÷ 86,400 ≈ 116/s avg; bursty to ~10³/s. **Binding constraint is GitHub's API rate limit (REST 5k req/h/install; GraphQL 5k points/h), not our compute** — hence webhook-first + GraphQL batching + a **rate-budgeted, resumable API backfill** (GH Archive only accelerates *public*-repo history; private repos aren't in it). |
 | High-volume text (CI logs, comments) | the firehose | Funnelled: deterministic filter → small-model gate → **< 5% reaches an LLM**. |
 
 **Takeaway:** this is not a QPS-bound system. Peak chat is ~10 QPS. Engineering effort goes to
 correlation correctness, isolation, and AI cost — not raw request volume.
+
+## 1a. Tenant distribution (whale vs. long-tail)
+
+The flat "20 users/tenant" mean is misleading; a few orgs carry most of the load. Provision and
+alert per cohort, on the real drivers:
+
+| Driver | Long-tail tenant (~p50) | Whale tenant (~p99) | Sizing implication |
+|--------|--------------------------|----------------------|--------------------|
+| Repos | tens | thousands | Citus colocation by `tenant_id`; **dedicated shards for whales** (ADR-004). |
+| PRs/day | tens | thousands | Per-tenant Kafka partition + rate-budget tier. |
+| Check-runs/day | hundreds | tens of thousands | Dominates ClickHouse + flake-detection volume. |
+| Retained history | months | years | Backfill cost + write-model size scale here; tier cold history to the lake. |
+| CI-log volume | small | very large | The funnel's primary input — gate before embed/LLM; whales drive AI cost. |
+| GraphQL point budget | rarely binding | **continuously binding** | Per-installation token bucket; whales need fair-scheduling + budget tiers so one org's backfill can't starve others (NFR-1.6). |
+
+**Rule:** capacity, rate budgets, and cost alerts are **per-tenant-cohort**, not per-mean. The first
+thing to saturate is a whale's **GitHub API rate budget** during backfill — size and alert there first.
 
 ## 2. Latency / freshness SLOs
 

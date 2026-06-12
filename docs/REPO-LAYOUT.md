@@ -58,7 +58,8 @@ dev-intel-platform/
 │   └── clickhouse/                # ClickHouse DDL
 │
 ├── ingest/
-│   └── gharchive/                 # GH Archive backfill loader (Temporal workflow) (Phase 1)
+│   ├── apibackfill/               # API backfill loader — tenant-history source of truth (Temporal) (Phase 1)
+│   └── gharchive/                 # GH Archive loader — public-repo/demo/benchmark data only (Phase 1)
 │
 ├── deploy/
 │   ├── helm/                      # per-service charts

@@ -130,9 +130,59 @@ CREATE TABLE contributor (
   contributor_id uuid NOT NULL DEFAULT gen_random_uuid(),
   display_name  text,
   is_bot        bool NOT NULL DEFAULT false,
-  team_id       uuid,
   resolution_confidence float,             -- identity resolution confidence
   PRIMARY KEY (tenant_id, contributor_id)
+  -- NOTE: current team is NOT a column on contributor — membership is time-versioned
+  -- in team_membership_history below (people change teams; metrics must be as-of-time correct).
+);
+
+-- ---------------------------------------------------------------------------
+-- Team / ownership source of truth (backs RBAC scope predicates + team baselines).
+-- Membership and ownership are TEMPORAL: every team/individual aggregate is computed
+-- "as of" the relevant event time, so reassignments don't retroactively rewrite history.
+-- Sourced from the GitHub org (teams/members → needs `members` permission) and repo
+-- contents (CODEOWNERS → needs `contents` permission); see GITHUB-APP.md.
+-- ---------------------------------------------------------------------------
+CREATE TABLE team (
+  tenant_id   uuid NOT NULL,
+  team_id     uuid NOT NULL DEFAULT gen_random_uuid(),
+  slug        text NOT NULL,                -- GitHub team slug
+  name        text,
+  parent_team_id uuid,                      -- org hierarchy (nullable)
+  PRIMARY KEY (tenant_id, team_id),
+  UNIQUE (tenant_id, slug)
+);
+
+CREATE TABLE team_membership_history (   -- temporal: who was on which team, when
+  tenant_id      uuid NOT NULL,
+  membership_id  uuid NOT NULL DEFAULT gen_random_uuid(),
+  team_id        uuid NOT NULL,
+  contributor_id uuid NOT NULL,
+  role           text,                      -- member|maintainer
+  valid_from     timestamptz NOT NULL,
+  valid_to       timestamptz,               -- NULL = current
+  PRIMARY KEY (tenant_id, membership_id)
+);
+
+CREATE TABLE repo_ownership (            -- which team(s) own a repo, temporal
+  tenant_id   uuid NOT NULL,
+  ownership_id uuid NOT NULL DEFAULT gen_random_uuid(),
+  repo        text NOT NULL,
+  team_id     uuid NOT NULL,
+  valid_from  timestamptz NOT NULL,
+  valid_to    timestamptz,
+  PRIMARY KEY (tenant_id, ownership_id)
+);
+
+CREATE TABLE codeowners_snapshot (       -- parsed CODEOWNERS, versioned per commit
+  tenant_id   uuid NOT NULL,
+  snapshot_id uuid NOT NULL DEFAULT gen_random_uuid(),
+  repo        text NOT NULL,
+  ref_sha     text NOT NULL,              -- commit the CODEOWNERS was read at
+  rules       jsonb NOT NULL,             -- [{path_glob, owners:[team_slug|login]}]
+  observed_at timestamptz NOT NULL,
+  PRIMARY KEY (tenant_id, snapshot_id),
+  UNIQUE (tenant_id, repo, ref_sha)
 );
 
 CREATE TABLE identity_link (   -- maps raw identifiers -> a unified contributor
@@ -233,3 +283,23 @@ flowchart LR
 - `identity_link (tenant_id, identifier_kind, identifier_value_hash)` unique → resolution.
 - ClickHouse metrics partitioned by month, ordered by `(tenant_id, repo, stage, day)`.
 - RLS: `USING (tenant_id = current_setting('app.tenant_id')::uuid)` on every table.
+- Temporal lookups: `team_membership_history (tenant_id, contributor_id, valid_from, valid_to)` and
+  `repo_ownership (tenant_id, repo, valid_from, valid_to)` → as-of-time scope resolution.
+
+## 7. Scope predicates & team baselines
+
+RBAC visibility (portfolio / team / individual, FR-1.3) and "team" metric baselines resolve against
+the team/ownership tables — **not** a mutable `team_id` on `contributor`. OPA decides the scope; the
+data-access layer compiles it to a predicate injected into every query *and* AI retrieval:
+
+| Scope | Predicate (conceptual) |
+|-------|------------------------|
+| **individual** | `author_id = :viewer` (plus the viewer's own drill-down). |
+| **team** | work items in repos the team owns (`repo_ownership` as-of the item's time) **or** authored by members of the team (`team_membership_history` as-of the item's time). |
+| **portfolio** | union over the teams in the viewer's subtree (`team.parent_team_id` closure). |
+
+**As-of-time correctness:** because membership and ownership are temporal, a contributor who moved
+teams is attributed to the team they were on **when the work happened** — aggregates don't
+retroactively shift when people reassign. Bus-factor / CODEOWNERS comparisons use the
+`codeowners_snapshot` at the PR's head SHA. Suppression of small cohorts is enforced per
+`METRICS-ETHICS.md` (k-anonymity).

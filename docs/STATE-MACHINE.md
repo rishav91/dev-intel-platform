@@ -15,17 +15,24 @@ stateDiagram-v2
     [*] --> Draft : opened draft=true
     [*] --> Open : opened draft=false
     Draft --> Open : ready_for_review
-    Open --> InReview : review_requested
+    Draft --> InReview : review activity on a draft
+    Open --> InReview : review_requested OR review activity (no formal request)
+    Open --> Approved : approved directly from Open (no prior request)
+    Open --> ChangesRequested : changes_requested directly from Open
     InReview --> ChangesRequested : review changes_requested
     InReview --> Approved : review approved
     ChangesRequested --> InReview : synchronize (new commits = rework)
+    ChangesRequested --> Approved : later approval
     Approved --> InReview : synchronize (post-approval push)
+    Approved --> ChangesRequested : later changes_requested / dismissal
     Open --> Merged : closed merged=true
     InReview --> Merged : closed merged=true
     Approved --> Merged : closed merged=true
+    ChangesRequested --> Merged : closed merged=true (merged while stale)
     Open --> Closed : closed merged=false
     InReview --> Closed : closed merged=false
     ChangesRequested --> Closed : closed merged=false
+    Approved --> Closed : closed merged=false
     Closed --> Open : reopened
     Merged --> [*]
     Closed --> [*]
@@ -43,6 +50,34 @@ stateDiagram-v2
     Closed --> [*]
 ```
 
+## 2a. Precedence rules (the FSM is driven by observed events, not just requests)
+
+A request-only model (`Open → InReview` *only* on `review_requested`) undercounts real PRs: many
+are reviewed with no formal request, use CODEOWNERS auto-requests, are approved straight from Open,
+or merge from a stale `ChangesRequested`. So the stage is derived by **precedence over the observed
+event set**, not a single trigger. On each event, recompute the target stage by the first matching
+rule (highest precedence first):
+
+1. **Terminal wins.** `closed merged=true` → `Merged`; `closed merged=false` → `Closed`
+   (from any non-terminal stage). `reopened` → `Open`.
+2. **Latest review verdict wins.** The most recent *non-dismissed* review submission sets:
+   `approved` → `Approved`; `changes_requested` → `ChangesRequested`. A `review_dismissed` removes
+   that verdict and falls back to rule 3/4.
+3. **Active review.** Any review activity — a submitted review (incl. `commented`), a review comment,
+   or a pending **requested reviewer** (explicit or CODEOWNERS auto-request) — means the PR is under
+   review → at least `InReview`. A formal `review_requested` is **sufficient but not necessary**.
+4. **Rework on push.** A `synchronize` (new commits) **after** an `Approved`/`ChangesRequested`
+   verdict returns the PR to `InReview` and increments the rework counter (Pillar 4).
+5. **Draft gating.** While `draft=true` the PR is `Draft` (review-wait clock not started), even if
+   review activity occurs; `ready_for_review` opens the review-wait window. Draft time is excluded
+   from review-wait.
+6. **Default.** No review signal yet and not draft → `Open`.
+
+**Inputs considered (in precedence):** merge/close state → latest review verdict → review activity /
+requested reviewers (incl. CODEOWNERS) → draft state → pushes/mergeability. Bot actors
+(`is_bot=true`) drive stage transitions but are excluded from review-wait and reviewer-load metrics.
+Event ordering is by `occurred_at`, not arrival (handles redelivery / backfill-vs-live).
+
 ## 3. Transition table (PR)
 
 | From | To | GitHub trigger | Notes / metric meaning |
@@ -50,7 +85,9 @@ stateDiagram-v2
 | — | Draft | `pull_request.opened` (draft=true) | Work started, not ready. Draft time excluded from review-wait. |
 | — | Open | `pull_request.opened` (draft=false) | Ready, awaiting review request. |
 | Draft | Open | `pull_request.ready_for_review` | Start of the "open, no review yet" idle window. |
-| Open | InReview | `pull_request.review_requested` | First-review-wait ends. |
+| Open | InReview | `pull_request.review_requested` **or** any review activity / CODEOWNERS auto-request (precedence rule 3) | First-review-wait ends. Request is sufficient, not necessary. |
+| Open | Approved / ChangesRequested | `pull_request_review.submitted` with no prior request | Direct review from Open (rule 2). |
+| ChangesRequested / Approved | Merged | `pull_request.closed` (merged=true) | Merged while stale (rule 1). |
 | InReview | ChangesRequested | `pull_request_review.submitted` state=`changes_requested` | Enters rework. |
 | InReview | Approved | `pull_request_review.submitted` state=`approved` | Ready to merge. |
 | ChangesRequested | InReview | `pull_request.synchronize` (new commits) | **Rework loop** — count of these = rework signal (Pillar 4). |

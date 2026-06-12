@@ -9,6 +9,7 @@ Prioritized functional (`FR-`) and non-functional (`NFR-`) requirements. **P0** 
 | FR-1.1 | Provision, suspend, hard-delete a tenant; deletion purges all data incl. projections and embeddings. | P0 |
 | FR-1.2 | Per-tenant config: connected GitHub org(s), OAuth/app tokens, sync cadence, feature flags. | P0 |
 | FR-1.3 | Tenant-scoped RBAC: org-admin, team-lead, IC roles with visibility scopes (portfolio/team/individual). | P0 |
+| FR-1.3a | **Team/ownership source of truth**: `team`, time-versioned `team_membership_history`, `repo_ownership`, `codeowners_snapshot` models backing scope predicates + team baselines (see `DATA-MODEL.md`). | P1 |
 | NFR-1.4 | Tenant isolation enforced in the data-access layer (injected filter) **plus** Postgres RLS backstop. | P0 |
 | FR-1.5 | Self-serve onboarding: install GitHub App, select repos, backfill, first insight < 30 min. | P1 |
 | NFR-1.6 | Noisy-neighbor protection: per-tenant rate/quota limits so one org's backfill can't starve others. | P1 |
@@ -23,11 +24,12 @@ Prioritized functional (`FR-`) and non-functional (`NFR-`) requirements. **P0** 
 | FR-2.3 | Rate-limit budgeting (REST + GraphQL points) with backoff; never drop events. | P0 |
 | FR-2.4 | Durable ordered event log (Kafka); raw payloads archived to S3 for replay. | P0 |
 | FR-2.5 | Normalize raw GitHub payloads → canonical domain events at the connector boundary. | P0 |
-| FR-2.6 | **GH Archive backfill**: bulk historical load via GH Archive for realism/volume, reconciled with API. | P1 |
+| FR-2.6 | **API backfill (tenant truth)**: historical load via REST/GraphQL, rate-budgeted + resumable, as the source of truth for private/tenant repos. GH Archive is *not* a tenant-history path (public timeline only) — used for public-repo/demo data, OSS tenants, benchmarking, and synthetic-scale testing. | P1 |
 | FR-2.7 | Resumable, checkpointed backfill (Temporal); crash resumes, not restarts. | P1 |
 | FR-2.8 | Connector health + auto token/installation refresh; alert admin on breakage. | P1 |
 | FR-2.9 | **Source-agnostic connector framework**: canonical event interface so a 2nd source can be added without core changes (not implemented now). | P1 |
 | FR-2.10 | Capability detection: connector reports which signals a repo emits (deployments/releases) to gate dependent metrics. | P1 |
+| FR-2.11 | **App permission handling**: declare required GitHub App permissions; detect granted scopes per installation and **degrade gracefully** when one is withheld (see `GITHUB-APP.md`). | P1 |
 
 ## 3. Canonical model, intra-GitHub correlation & identity resolution
 
@@ -40,7 +42,7 @@ Prioritized functional (`FR-`) and non-functional (`NFR-`) requirements. **P0** 
 | NFR-3.5 | Correlation + resolution deterministic and re-runnable; replay rebuilds the graph identically. | P1 |
 | FR-3.6 | Human override/correction of bad links/identities, fed back into the resolver. | P2 |
 
-## 4. Analytics & insights (the seven pillars, read side / CQRS)
+## 4. Analytics & insights (four core pillars P0, three staged, read side / CQRS)
 
 | ID | Requirement | Priority |
 |----|-------------|----------|
@@ -51,6 +53,7 @@ Prioritized functional (`FR-`) and non-functional (`NFR-`) requirements. **P0** 
 | FR-4.5 | Read models are independently materialized, rebuildable projections. | P0 |
 | FR-4.6 | **Contributor & collaboration**: collaboration graph, knowledge concentration / bus factor, load signals. | P1 |
 | FR-4.7 | Outlier detection (percentile vs. team/historical baseline, not fixed thresholds). | P1 |
+| FR-4.7a | Every metric has a **defined formula, exclusions, confidence, and minimum sample threshold** (`METRIC-SPEC.md`); below threshold it is suppressed, not shown low-confidence. | P0 |
 | FR-4.8 | **Capability-gated DORA**: deploy frequency / deploy lead time / MTTR — only when deployment signals present. | P2 |
 | FR-4.9 | Cross-tenant anonymized benchmarks with k-anonymity threshold (≥N tenants). | P2 |
 | — | ~~Delivery divergence / planned-vs-actual / milestone metrics~~ — **EXCLUDED** (thin signal). | — |
@@ -70,8 +73,8 @@ Detailed: [`ai-layer-requirements.md`](ai-layer-requirements.md). Summary:
 | FR-5.7 | Conversational Q&A with citations + drill-down. | P1 |
 | FR-5.8 | Model routing/gateway (small vs. large), vendor-abstracted + fallback. | P1 |
 | FR-5.9 | LLM response caching. | P1 |
-| FR-5.10 | Change-risk scoring model (pillar 6). | P1 |
-| FR-5.11 | AI-authorship detection + rework/revert correlation (pillar 7). | P2 |
+| FR-5.10 | **PR revert-risk** scoring model (pillar 6); incident-likelihood half capability-gated on integrated deploy/incident signals. | P1 |
+| FR-5.11 | AI-authorship detection + rework/revert correlation (pillar 7) — **opt-in/experimental**, capability-gated, ideally driven by explicit tool/tenant-policy labels (low-recall from trailers alone). | P2 |
 
 ## 6. Data governance & security
 
@@ -99,7 +102,7 @@ Detailed: [`ai-layer-requirements.md`](ai-layer-requirements.md). Summary:
 
 | ID | Requirement | Priority |
 |----|-------------|----------|
-| NFR-8.1 | Polyglot persistence: Kafka, Postgres+Citus (write), ClickHouse (metrics), OpenSearch (search), pgvector/Qdrant (vectors), Redis (cache), S3 (lake). | P0 |
+| NFR-8.1 | Polyglot persistence — the **P0-complete target** architecture: Kafka, Postgres+Citus (write), ClickHouse (metrics), OpenSearch (search), pgvector/Qdrant (vectors), Redis (cache), S3 (lake). **Phased in per `ROADMAP.md`, not all stood up at once** — Phase 0 = Kafka + Postgres/Citus + Redis + MinIO(S3); ClickHouse/OpenSearch arrive with the read models (Phase 2); vectors with the AI tier (Phase 3). | P0 |
 | NFR-8.2 | Tenant sharding + read replicas. | P0 |
 | NFR-8.3 | Caching tiers (read-model + LLM response) with correct invalidation. | P0 |
 | NFR-8.4 | Horizontal scale to 100k DAU / 5k tenants with documented capacity model. | P1 |
@@ -112,7 +115,7 @@ Detailed: [`ai-layer-requirements.md`](ai-layer-requirements.md). Summary:
 
 | ID | Requirement | Priority |
 |----|-------------|----------|
-| FR-9.1 | Role-tailored dashboards for the seven pillars (portfolio/team/individual). | P0 |
+| FR-9.1 | Role-tailored dashboards for the **four core pillars** (portfolio/team/individual); staged pillars 5–7 added as they ship. | P0 |
 | FR-9.2 | Authenticated tenant-scoped GraphQL/REST API over read models. | P1 |
 | FR-9.3 | Proactive notifications (Slack/email digest) of new risks/blockers. | P1 |
 | FR-9.4 | Save/share/export insights. | P1 |

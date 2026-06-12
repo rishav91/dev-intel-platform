@@ -15,8 +15,8 @@ System design. Locked OSS stack (see `../CLAUDE.md`). Event-driven, CQRS, polygl
 
 ```mermaid
 flowchart TB
-    GH[GitHub org<br/>App webhooks + REST/GraphQL]:::src
-    GHA[GH Archive<br/>bulk history]:::src
+    GH[GitHub org<br/>App webhooks + REST/GraphQL<br/>tenant-history source of truth]:::src
+    GHA[GH Archive<br/>public-repo / demo / benchmark data only]:::src
 
     subgraph ING[Ingestion tier - Go]
         WH[Webhook Gateway<br/>verify + fast ack]
@@ -67,8 +67,8 @@ flowchart TB
 
     USERS([Users / dashboards]):::ext
 
-    GH -->|webhooks| WH --> CONN --> NORM --> K
-    GHA -. backfill .-> CONN
+    GH -->|webhooks + API backfill| WH --> CONN --> NORM --> K
+    GHA -. public-data only .-> CONN
     CONN -. detail fetch .-> NORM
     K --> S3
     K --> GRAPH --> G
@@ -93,7 +93,7 @@ flowchart TB
 
 ### 3.1 Ingestion (Go)
 - **Webhook Gateway** terminates GitHub App webhooks, verifies HMAC, writes to Kafka `raw.github` immediately (fast ack).
-- **GitHub connector** owns App installation tokens, **rate-limit budgeting** across REST points + GraphQL point cost, detail fetches (a webhook often needs a follow-up GraphQL query for full context), **capability detection** (does this repo emit deployments/releases? → gates DORA metrics), and **backfill** — live history via API, bulk history via **GH Archive** (Temporal-orchestrated, resumable). Reconciles GH Archive records with API truth.
+- **GitHub connector** owns App installation tokens, **rate-limit budgeting** across REST points + GraphQL point cost, detail fetches (a webhook often needs a follow-up GraphQL query for full context), **capability detection** (does this repo emit deployments/releases? → gates DORA metrics), and **backfill** — tenant history via the **REST/GraphQL API** (Temporal-orchestrated, rate-budgeted, resumable/checkpointed). This API path is the **source of truth** for private/tenant repos. **GH Archive** is used only for *public*-repo demo/OSS data, benchmarking, and synthetic-scale testing — it carries the public GitHub timeline, not private repos, so it cannot back-fill a tenant's private history. Where a tenant's repos *are* public, GH Archive may accelerate the crawl, reconciled against API truth.
 - **Normalizer** maps GitHub payloads → canonical events on `canonical.events`. Idempotency: `(delivery_id)` for webhooks, `(repo, node_id, updated_at)` for fetched entities.
 
 ### 3.2 Correlation (Apache Flink)
@@ -158,7 +158,7 @@ flowchart LR
 ```
 
 - **Tenant boundary:** Citus shard key + Postgres RLS on `current_setting('app.tenant_id')`; the DAL sets the session var per request — a forgotten filter is non-exploitable.
-- **RBAC scope:** OPA decides portfolio/team/individual visibility; the resulting predicate is injected into every query *and* AI retrieval (two-level).
+- **RBAC scope:** OPA decides portfolio/team/individual visibility; the resulting predicate is injected into every query *and* AI retrieval (two-level). The predicate resolves against the **team/ownership source of truth** — `team`, time-versioned `team_membership_history`, `repo_ownership`, `codeowners_snapshot` (see `DATA-MODEL.md`) — so "team" scope and team baselines are computed as-of the relevant time, not from a single mutable `team_id`.
 - **Vectors:** per-tenant namespace; deletion purges vectors.
 - **Noisy neighbor:** per-tenant GitHub-API + inference budgets; fair scheduling.
 
@@ -166,11 +166,24 @@ flowchart LR
 
 | Workload | Estimate | Implication |
 |----------|----------|-------------|
-| Avg users/tenant | 20 | Many small shards. |
+| Avg users/tenant | 20 (but **highly skewed** — model whales, see below) | Many small shards + a few large ones. |
 | Interactive chat | ~50k q/day ≈ **0.6 QPS avg, ~10 peak** | Interactive RAG is **not** the bottleneck. |
 | GitHub events (PR/review/commit/issue/check) | per-tenant repos' activity; large orgs dominate | Webhook-first + GraphQL batching; budget per tenant. |
 | High-volume text (CI logs, comments) | the firehose | Funnel before embed/LLM (< 5% reaches an LLM). |
-| Backfill | bulk via **GH Archive**, not API crawl | Avoids exhausting API rate limits on history. |
+| Backfill | tenant history via **rate-budgeted, resumable API** crawl; GH Archive only for public repos | Private repos aren't in GH Archive; the binding constraint is GitHub's API rate limit, so budget + checkpoint it. |
+
+**Tenant distribution (don't size on the flat average).** "20 users/tenant" hides whale tenants
+that dominate load. Size by the real drivers, modeled per cohort (long-tail vs. whale):
+
+| Driver | Long-tail tenant | Whale tenant | Implication |
+|--------|------------------|--------------|-------------|
+| Repos | tens | thousands | Citus colocation; dedicated shards for whales (ADR-004). |
+| PRs/day, check-runs/day | tens–hundreds | tens of thousands | Per-tenant Kafka partitioning + rate-budget tiers. |
+| Retained history | months | years | Cold-history tiered to the lake; backfill cost scales here. |
+| CI-log volume | small | very large | The funnel's most important input — gate before embed/LLM. |
+| GraphQL point budget | rarely binding | continuously binding | Per-installation token bucket; whales need fair-scheduling + tiering. |
+
+See `requirements/nfr-and-capacity.md` §1/§5 for the per-driver derivations.
 
 **Sharding:** Citus by `tenant_id`, co-locating an org's data. **Read scaling:** ClickHouse + Postgres replicas + Redis. **Kafka:** partition by `tenant_id` for per-tenant ordering.
 
