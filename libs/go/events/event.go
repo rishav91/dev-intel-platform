@@ -12,11 +12,18 @@ import (
 
 // Kafka topics.
 const (
-	TopicRawGitHub     = "raw.github"
-	TopicCanonical     = "canonical.events"
-	HeaderTraceID      = "trace-id"
-	HeaderGitHubEvent  = "x-github-event"
-	HeaderGitHubDeliv  = "x-github-delivery"
+	TopicRawGitHub = "raw.github"
+	TopicCanonical = "canonical.events"
+	// TopicDeadLetter holds messages the normalizer can't process and won't
+	// retry (permanently bad: undecodable, missing required fields). Kept for
+	// inspection/replay rather than dropped silently.
+	TopicDeadLetter = "raw.github.dlq"
+
+	HeaderTraceID     = "trace-id"
+	HeaderGitHubEvent = "x-github-event"
+	HeaderGitHubDeliv = "x-github-delivery"
+	// HeaderDLQReason carries why a message was dead-lettered.
+	HeaderDLQReason = "dlq-reason"
 )
 
 // EventType enumerates canonical event types (subset implemented in Phase 0).

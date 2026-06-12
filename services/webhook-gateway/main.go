@@ -12,9 +12,12 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"os/signal"
 	"strings"
+	"syscall"
 	"time"
 
+	"github.com/dev-intel/platform/libs/go/config"
 	"github.com/dev-intel/platform/libs/go/events"
 	"github.com/dev-intel/platform/libs/go/kafka"
 	"github.com/dev-intel/platform/libs/go/observability"
@@ -23,9 +26,13 @@ import (
 func main() {
 	log := observability.Logger("webhook-gateway")
 
-	brokers := splitEnv("KAFKA_BROKERS", "localhost:9092")
-	secret := getenv("GITHUB_WEBHOOK_SECRET", "dev-secret")
-	addr := getenv("LISTEN_ADDR", ":8080")
+	brokers := config.List("KAFKA_BROKERS", "localhost:9092")
+	secret := config.String("GITHUB_WEBHOOK_SECRET", "dev-secret")
+	addr := config.String("LISTEN_ADDR", ":8080")
+
+	// SIGTERM/SIGINT cancels ctx → triggers graceful drain below.
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
 
 	writer := kafka.NewWriter(brokers, events.TopicRawGitHub)
 	defer writer.Close()
@@ -38,9 +45,29 @@ func main() {
 
 	log.Info("listening", "addr", addr, "brokers", brokers)
 	httpSrv := &http.Server{Addr: addr, Handler: mux, ReadHeaderTimeout: 5 * time.Second}
-	if err := httpSrv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+
+	// Serve in the background so main can wait on the signal context.
+	errCh := make(chan error, 1)
+	go func() {
+		if err := httpSrv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			errCh <- err
+		}
+	}()
+
+	select {
+	case err := <-errCh:
 		log.Error("server exited", "err", err)
 		os.Exit(1)
+	case <-ctx.Done():
+		log.Info("shutdown signal received; draining")
+		// Stop accepting new connections and let in-flight requests finish.
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if err := httpSrv.Shutdown(shutdownCtx); err != nil {
+			log.Error("graceful shutdown failed", "err", err)
+			os.Exit(1)
+		}
+		log.Info("drained; exiting")
 	}
 }
 
@@ -105,22 +132,4 @@ func validSignature(secret []byte, header string, body []byte) bool {
 	mac := hmac.New(sha256.New, secret)
 	mac.Write(body)
 	return hmac.Equal(mac.Sum(nil), want)
-}
-
-// --- tiny env helpers ---
-
-func getenv(k, def string) string {
-	if v := os.Getenv(k); v != "" {
-		return v
-	}
-	return def
-}
-
-func splitEnv(k, def string) []string {
-	v := getenv(k, def)
-	parts := strings.Split(v, ",")
-	for i := range parts {
-		parts[i] = strings.TrimSpace(parts[i])
-	}
-	return parts
 }

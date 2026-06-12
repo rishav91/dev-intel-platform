@@ -48,17 +48,28 @@ passes, and CI is green. (Phase 0 exit: FR-1.1–1.4, FR-2.1–2.5, NFR-7.2)
 
 Small foundation-completing tasks before breadth.
 
-- [ ] **Raw archive to S3/SeaweedFS.** Gateway (or a tiny archiver consumer) writes every `raw.github`
-      payload to SeaweedFS keyed `tenant/date/delivery`. Enables replay (ADR-010). *(FR-2.4)*
-- [ ] **Delivery-id dedup.** Explicit idempotency on `X-GitHub-Delivery` (processed-deliveries
-      table or Redis set) so redeliveries are provably no-ops, not just upsert-absorbed. *(FR-2.2, ADR-010)*
-- [ ] **Dead-letter + retry.** Normalizer routes permanently-bad messages to a DLQ topic; transient
-      failures retry with backoff. *(AI/ingest robustness)*
-- [ ] **Unit tests.** `connector/github` normalization (table-driven over fixture payloads);
-      `tenancy.WithTenant` behavior. No infra needed.
-- [ ] **Config + graceful shutdown.** Centralize env config; ensure both services drain on SIGTERM.
+- [x] **Raw archive to S3/SeaweedFS.** A separate `archiver` consumer (own consumer group) writes
+      every `raw.github` payload to SeaweedFS keyed `raw/github/<tenant>/<date>/<delivery>.json`
+      (unknown installs → `_unresolved/<id>`, never dropped). `PutIfAbsent` makes it idempotent.
+      Kept off the gateway hot path. Enables replay (ADR-010). *(FR-2.4)*
+- [x] **Delivery-id dedup.** `processed_delivery` table (tenant-scoped, RLS FORCE); normalizer marks
+      the delivery in the **same tx** as the work_item write, so a redelivery is a provable no-op
+      (no re-emit), not just upsert-absorbed. *(FR-2.2, ADR-010)*
+- [x] **Transactional outbox.** The canonical event is staged in an `outbox` table inside that same
+      tx (dedup mark + work_item + event commit atomically), and a separate `outbox-relay` drains it
+      to Kafka at-least-once. Closes the dual-write window that dedup would otherwise turn into a lost
+      emit; the relay runs as a dedicated `devintel_relay` role scoped to the outbox. *(ADR-012)*
+- [x] **Dead-letter + retry.** Normalizer dead-letters permanently-bad messages (undecodable/invalid
+      payloads) to `raw.github.dlq` then commits; transient failures (DB/Kafka) retry with capped
+      exponential backoff. Fixed the prior busy-loop-on-error. *(AI/ingest robustness)*
+- [x] **Unit tests.** `connector/github` normalization (table-driven: opened/merged/closed/reopened/
+      skip/missing-install/malformed); gateway `validSignature`; `config` parsing; normalizer
+      `backoff`/error-classification. No infra needed. (`tenancy.WithTenant` stays covered by the
+      red-team isolation test, which needs Postgres.)
+- [x] **Config + graceful shutdown.** Env parsing centralized in `libs/go/config`; gateway drains via
+      `http.Server.Shutdown` on SIGTERM; archiver/normalizer exit cleanly on `signal.NotifyContext`.
 - [ ] **OTel (optional now).** Swap the slog trace-id for real OpenTelemetry spans exported via OTLP
-      (the seam is isolated in `libs/go/observability`). Defer if it slows momentum. *(NFR-7.2)*
+      (the seam is isolated in `libs/go/observability`). **Deferred** to keep momentum. *(NFR-7.2)*
 
 **Done when:** raw events are archived + replayable, redeliveries are idempotent, and unit tests cover the spine.
 

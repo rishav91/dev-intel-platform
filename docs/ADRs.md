@@ -14,6 +14,7 @@ Each ADR: context → decision → alternatives → consequences. Reference by I
 - ADR-009 — Analytical read store: ClickHouse
 - ADR-010 — Consistency model & idempotency contract
 - ADR-011 — "AI earns its place" (LLM-as-narrator, not decider)
+- ADR-012 — Transactional outbox for canonical event emission
 
 ---
 
@@ -215,3 +216,49 @@ less to filter. + Evals focus on flag/label/summary quality, not numeric correct
 stays deterministically reproducible (trust wedge protected). − Requires review discipline to
 reject "just use the LLM" shortcuts; some features wait on a small-ML model instead of a quick LLM
 prototype.
+
+---
+
+## ADR-012 — Transactional outbox for canonical event emission
+
+**Status:** Accepted (implemented in M0.5).
+
+**Context.** The normalizer has two side effects per delivery: (1) the OLTP write under RLS — the
+`work_item` upsert plus the `processed_delivery` dedup mark (ADR-010), committed in one Postgres tx;
+and (2) the canonical event published to Kafka for downstream projections. Originally (2) ran
+*after* the tx committed — a classic **dual write**. Combined with delivery-id dedup this has a
+sharp failure mode: if the process dies after the tx commits but before the publish, the redelivery
+finds the delivery already marked processed and **skips the emit** → the canonical event is lost
+with no replay to recover it (the raw archive replays only if the dedup state is also dropped).
+Without dedup the same crash is harmless (the redelivery re-publishes; downstream is keyed/
+upserting), but then redeliveries aren't provable no-ops. We want *both* provable dedup *and* no
+lost emits.
+
+**Decision.** Stage the canonical event in an **`outbox` table written in the same transaction** as
+the work_item + dedup mark, so all three commit atomically (DATA: `db/migrations/0005_outbox.sql`).
+A separate **`outbox-relay`** service drains unpublished rows to Kafka in insertion order
+(`FOR UPDATE SKIP LOCKED`), then stamps `published_at`. Publication is **at-least-once**: a crash
+after publish but before the mark republishes next pass, which downstream absorbs (ADR-010
+projection keys). This removes the dual write: the canonical topic is fed *exactly* from committed
+rows.
+
+**Isolation.** The outbox carries tenant payload, so it has RLS (FORCE) like `work_item`. The write
+path (`devintel_app`, scoped by `WithTenant`) can only enqueue its own tenant's rows. The relay must
+read across tenants, so it runs as a dedicated **`devintel_relay`** role (NOSUPERUSER/NOBYPASSRLS)
+whose policy grants read+update on the outbox table only — a scoped exception, not a blanket RLS
+bypass. Chosen over per-tenant polling (which doesn't scale to 5k tenants — one query drains all).
+
+**Alternatives.** (a) **Keep the dual write, drop dedup** — correct today (no event consumers yet)
+but pushes duplicate-safety onto every future projector, with a silent double-count failure mode;
+`event_id` is regenerated per emit so downstream dedup must key on `source_event_id`/natural keys.
+(b) **Best-effort publish + accept the lost-emit window** — cheapest, but violates the "rebuildable
+canonical log" guarantee (ADR-010). (c) **CDC (Debezium) off the WAL** — no relay to run, but heavy
+infra for M0.5; the table-poll relay is a drop-in the CDC path can replace later. (d) **Relay as a
+goroutine in the normalizer** — couples publish latency/scaling to the consumer; a separate
+deployable keeps them independent.
+
+**Consequences.** + No dual-write window; dedup stays and is now downside-free. + Canonical topic is
+exactly the committed rows; replay = drop write-model state (incl. outbox + dedup) and re-run.
++ Per-tenant ordering preserved by a single relay in `outbox_id` order. − One more table, one more
+deployable, and a new DB role. − Published rows accumulate (a later janitor prunes by retention).
+− A slow/stopped relay adds emission latency (bounded, eventual — acceptable per ADR-010).

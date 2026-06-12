@@ -1,4 +1,4 @@
-.PHONY: up down logs build vet test test-isolation run-gateway run-normalizer send-sample tidy
+.PHONY: up down logs build vet test test-isolation run-gateway run-normalizer run-archiver run-relay send-sample tidy
 
 COMPOSE := docker compose -f deploy/docker-compose.dev.yml
 # Runtime/test connections use the least-privilege app role so RLS engages
@@ -34,6 +34,12 @@ run-gateway:
 
 run-normalizer:
 	go run ./services/normalizer
+
+run-archiver:  ## consume raw.github → archive payloads to SeaweedFS (replay net)
+	go run ./services/archiver
+
+run-relay:     ## drain the outbox → publish canonical events to Kafka (ADR-012)
+	go run ./services/outbox-relay
 
 send-sample:   ## post the sample pull_request webhook to the gateway
 	./scripts/send-sample-webhook.sh
