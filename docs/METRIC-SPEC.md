@@ -37,6 +37,7 @@ like "rubber-stamp," "flaky," "self-merge," "hotspot," "stuck" are defined here 
 | **PR size vs. outcome** | correlation of `additions+deletions` (and `changed_files`) buckets with cycle time and revert rate | reverts/merges from bots | ≥ 50 PRs | Size buckets: XS/S/M/L/XL by percentile. |
 | **Self-merge rate** | share of PRs merged by the author **with no non-author approval** | bot-authored; solo-maintainer repos (flagged, not counted) | ≥ 20 merged PRs | Governance risk signal. |
 | **Hotspot file** | files with **high churn × high revert association** (commits touching the file that were later reverted) | vendored/generated paths (configurable globs) | ≥ 10 changes to the file | Ranked list; drill-down to the PRs. |
+| **Intent-vs-diff divergence** *(AI, P1)* | LLM compares stated intent (title/description/linked-issue text) vs. the diff; flag + evidence_refs, confidence-scored (AI-11.2) | trivial-size PRs below LOC floor; bot-authored; PRs with no description | ≥ 5 flagged PRs before trend-reporting | A **flag with evidence**, not a trusted number; also a change-risk input (pillar 6). Confidence = low/medium; surfaced for scrutiny, not blame. |
 
 ## Pillar 3 — CI reliability
 

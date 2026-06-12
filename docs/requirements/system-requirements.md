@@ -1,6 +1,6 @@
 # System Requirements — Dev Intelligence Platform (GitHub-only)
 
-Prioritized functional (`FR-`) and non-functional (`NFR-`) requirements. **P0** must-have/safety · **P1** fast-follow · **P2** differentiator. Governed by the signal-confidence principle (see PRD §6): metrics on thin signals are excluded, not deferred.
+Prioritized functional (`FR-`) and non-functional (`NFR-`) requirements. **P0** must-have/safety · **P1** fast-follow · **P2** differentiator. Governed by the signal-confidence principle (see PRD §6): metrics on thin signals are excluded, not deferred. AI requirements are additionally governed by **"AI earns its place" (ADR-011)**: an LLM is used only where the value is locked in unstructured language/code semantics, no deterministic/classical-ML path reaches the needed quality, and the output is a flag/label/summary — never a trusted number, a query, or an action.
 
 ## 1. Multi-tenancy & tenant lifecycle
 
@@ -48,7 +48,7 @@ Prioritized functional (`FR-`) and non-functional (`NFR-`) requirements. **P0** 
 |----|-------------|----------|
 | FR-4.1 | **PR flow & bottlenecks**: per-stage cycle/idle time; stuck/stale PRs; review-queue backlog; drill-down to the item. | P0 |
 | FR-4.2 | **Recurring blockers**: stuck PRs, reopened items, rework loops, flaky-CI clusters. | P0 |
-| FR-4.3 | **Code review health**: review depth, rubber-stamp rate, PR-size vs. outcome, self-merge risk, hotspot files. | P0 |
+| FR-4.3 | **Code review health**: review depth, rubber-stamp rate, PR-size vs. outcome, self-merge risk, hotspot files. *(P1 AI enrichment: intent-vs-diff divergence — FR-5.12.)* | P0 |
 | FR-4.4 | **CI reliability**: check pass rate, time-to-green, flaky-check detection. | P0 |
 | FR-4.5 | Read models are independently materialized, rebuildable projections. | P0 |
 | FR-4.6 | **Contributor & collaboration**: collaboration graph, knowledge concentration / bus factor, load signals. | P1 |
@@ -75,6 +75,7 @@ Detailed: [`ai-layer-requirements.md`](ai-layer-requirements.md). Summary:
 | FR-5.9 | LLM response caching. | P1 |
 | FR-5.10 | **PR revert-risk** scoring model (pillar 6); incident-likelihood half capability-gated on integrated deploy/incident signals. | P1 |
 | FR-5.11 | AI-authorship detection + rework/revert correlation (pillar 7) — **opt-in/experimental**, capability-gated, ideally driven by explicit tool/tenant-policy labels (low-recall from trailers alone). | P2 |
+| FR-5.12 | **Semantic change understanding** (AI-11, genuine-LLM per ADR-011): grounded change summary + **intent-vs-diff divergence** (stated intent vs. actual diff) emitted as a flag-with-evidence; feeds review health (FR-4.3, pillar 2) and revert-risk (FR-5.10, pillar 6), never a standalone trusted score. | P1 |
 
 ## 6. Data governance & security
 

@@ -83,6 +83,7 @@ Define metrics against `METRIC-SPEC.md` (formula + exclusions + min sample). **E
 - **Idempotency:** every consumer/inference job keyed and upserting; replays are safe.
 - **Untrusted input:** PR/issue/review/commit text is adversarial — see AI-ARCHITECTURE §Safety.
 - **Signal discipline:** classify every new metric against the signal-confidence table before building.
+- **AI earns its place (ADR-011):** use an LLM only where the value is locked in unstructured language/code semantics, no deterministic/classical-ML path reaches the needed quality, and the output is a flag/label/cluster/summary/conversation — never a trusted number, a query, or an action. Numbers and decisions are deterministic or classical ML; the LLM narrates over results it didn't compute. Classify every proposed AI feature against this test before building.
 - **IDs:** `FR-`/`NFR-`, `AI-x.y`, `ADR-00x` — reference in code/PRs.
 
 ## Status

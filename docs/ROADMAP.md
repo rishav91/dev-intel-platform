@@ -31,13 +31,16 @@ Full system, sequenced so the **P0 slice is a coherent first product**. Each pha
 **Exit:** dashboards show the four pillars with drill-down; a read model can be dropped and replayed. (FR-4.1–4.5, FR-9.1, NFR-8.3, NFR-8.7)
 
 ## Phase 3 — AI layer (precompute + governance) — **primary focus**
-**Goal:** governed, cost-controlled AI insights.
+**Goal:** governed, cost-controlled AI insights. Every AI feature here is justified against
+**"AI earns its place" (ADR-011)** — LLM only where the value is locked in language/code semantics
+and the output is a flag/label/summary, never a trusted number.
 - Inference pipeline: cost funnel (over CI logs/comments) → small-model gate → LLM; idempotent insight projections.
 - Embeddings + pgvector, per-tenant isolation + deletion.
 - LiteLLM + vLLM/TEI; PII redaction (Presidio) at ingestion.
 - Prompt-injection defense + output validation; per-tenant cost telemetry (Langfuse) + audit log.
 - Blocker classification + **PR risk scoring** (GBM + LLM "why").
-**Exit:** blockers classified and PRs risk-scored on ingest; < 5% of comment/CI text hits an LLM; per-tenant cost tracked; injection red-team green in CI; risk model backtested on real reverts. (AI-1.x, AI-2.x, AI-7.x, AI-8.1–8.2, AI-9.x)
+- **Semantic change understanding** (AI-11): grounded change summary + **intent-vs-diff divergence** flag — genuine-LLM, feeds pillars 2 (review health) and 6 (change risk).
+**Exit:** blockers classified and PRs risk-scored on ingest; semantic change summaries + intent-vs-diff divergence flagged with evidence; < 5% of comment/CI text hits an LLM; per-tenant cost tracked; injection red-team green in CI; risk model backtested on real reverts. (AI-1.x, AI-2.x, AI-7.x, AI-8.1–8.2, AI-9.x, AI-11.x)
 
 ## Phase 4 — Interactive + proactive + collaboration
 **Goal:** push/pull intelligence + pillar 5.

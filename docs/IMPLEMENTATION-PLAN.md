@@ -6,6 +6,14 @@ identity resolution). Beyond Phase 1, see `ROADMAP.md`.
 
 Each task notes acceptance criteria and the requirement IDs it satisfies. `[ ]` = todo.
 
+> **Design guardrail — "AI earns its place" (ADR-011).** Nothing in M0–Phase 1 uses an LLM (this is
+> ingestion/correlation/identity — all deterministic). When the AI layer lands (Phase 3), an LLM is
+> added only where the value is locked in language/code semantics and the output is a
+> flag/label/summary — never a trusted number, a query, or an action. Numbers stay deterministic or
+> classical ML. The first genuine-LLM feature is **semantic change understanding** (AI-11:
+> grounded change summary + intent-vs-diff divergence), which depends on the diff that P1.C
+> enrichment fetches — so the ingestion work below is its prerequisite.
+
 ---
 
 ## Current state (what the scaffold gives us)
@@ -93,6 +101,10 @@ Webhooks omit fields we need (e.g. `changed_files`, full diffs context).
 - [ ] Backfill-vs-live ordering: stamp `occurred_at` from source, not arrival.
 
 **Done when:** enriched PRs carry size/review metadata the raw webhook lacked.
+
+> Forward-pointer: the **diff/patch** fetched here is the input the Phase-3 semantic change
+> understanding worker (AI-11: change summary + intent-vs-diff divergence) consumes. Make sure
+> enrichment can surface per-file patches, not just counts.
 
 ### P1.D — State-transition derivation
 Implement the `STATE-MACHINE.md` FSM.

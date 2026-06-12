@@ -4,6 +4,12 @@ Detailed expansion of the AI subsystem for the GitHub-only design. Each requirem
 
 Priorities: **P0** must-have · **P1** fast-follow · **P2** later. ID prefix `AI-<area>.<n>`.
 
+**Governing rule — "AI earns its place" (ADR-011).** Every requirement below assumes an LLM is used
+only where the value is locked in unstructured language/code semantics, no deterministic or
+classical-ML path reaches the needed quality, and the failure mode is tolerable (the LLM emits a
+flag/label/cluster/summary/conversation, never a trusted number, a query, or an action). Numbers and
+decisions are deterministic or classical ML; the LLM narrates over results it did not compute.
+
 ## 1. Inference orchestration & pipeline
 
 ### AI-1.1 — Async event-driven inference [P0]
@@ -175,6 +181,27 @@ GitHub text (PR bodies, comments, commit messages) is untrusted/adversarial.
 ### AI-10.2 — Impact correlation [P2]
 - Correlate AI authorship with rework/revert/cycle-time, as a read model; tenant-scoped, no cross-tenant aggregation without privacy gating.
 
+## 11. Semantic change understanding (pillars 2 + 6)
+
+A genuine-LLM use per ADR-011: the value is locked in code + prose semantics no structural field
+exposes. Precompute on PR open/synchronize/ready-for-review, after enrichment supplies the diff.
+
+### AI-11.1 — Semantic change summary [P1]
+- LLM emits a concise "what this PR actually does," **grounded in the changed files** (cited),
+  never free invention; ungrounded output suppressed (inherits AI-3.2/AI-7.4).
+- Large diffs chunked + summarized hierarchically within the context budget (AI-3.4).
+- Idempotent per `(tenant_id, pr_node_id, head_sha, model_version, prompt_version)` (AI-1.3).
+
+### AI-11.2 — Intent-vs-diff divergence [P1]
+- Compares stated intent (title, description, linked-issue text) against the actual diff; emits a
+  schema-validated `{divergence: bool, confidence, evidence_refs[]}` (AI-7.3) — a **flag with
+  evidence, never a standalone trusted score**.
+- The flag is **one input** to the GBM revert-risk model (AI-9.1) and a **review-health signal**
+  (pillar 2), surfaced for scrutiny, not individual blame (`METRICS-ETHICS.md`).
+- Diff + description treated as untrusted/fenced (AI-7.1); no action taken from their content.
+- Precision/recall tracked on a labeled set of known intent-mismatched PRs; regressions gate
+  releases (AI-8.3).
+
 ## Interview deep-dive map
 
 - **AI-2.2 / AI-3.1** — isolation + RBAC retrieval (defense in depth).
@@ -183,3 +210,5 @@ GitHub text (PR bodies, comments, commit messages) is untrusted/adversarial.
 - **AI-1.3** — idempotent inference + rebuildable projections (reprocess on model upgrade).
 - **AI-6.1** — NL→validated query (safe data access, no raw SQL).
 - **AI-9.1** — explainable risk scoring backtested on real reverts (ties AI to a concrete outcome).
+- **AI-11 / ADR-011** — "AI earns its place": the LLM reads code+prose where structure can't
+  (intent-vs-diff divergence) and emits a flag with evidence, while every number stays deterministic.

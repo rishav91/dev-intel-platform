@@ -4,6 +4,8 @@ The production AI subsystem. Detailed requirements + acceptance criteria: [`requ
 
 **Governing principle:** most inference is **precompute** (async, event-driven). Untrusted input is **GitHub text** (PR/issue/review/commit/comment bodies, CI logs). The text firehose to funnel = CI logs + comments.
 
+**AI earns its place (ADR-011).** An LLM is used only where the value is locked in unstructured language or code semantics, no deterministic/classical-ML path reaches the needed quality, and the failure mode is tolerable: it emits a **flag, label, cluster, summary, or conversation — never a trusted number, a query, or an action**. Every number/decision is deterministic or classical ML (e.g., the GBM risk score, §9.1); the LLM only narrates over results it did not compute. Each worker below is justified against this test.
+
 ## 1. AI dataflow
 
 ```mermaid
@@ -24,6 +26,7 @@ flowchart TB
         RS[PR risk scorer]
         AIA[AI-authorship detector]
         SUM[Summarizer]
+        SCU[Semantic change understanding<br/>summary + intent-vs-diff divergence]
     end
     INF --> WORKERS
 
@@ -128,6 +131,28 @@ Model never emits raw SQL and never supplies tenant/scope — the system injects
 ### 9.2 AI-authorship impact (pillar 7)
 - Detect AI-generated PRs/commits via metadata + `Co-authored-by` trailers + heuristics; confidence-scored (AI-10.1).
 - Correlate authorship with rework/revert/cycle-time as a tenant-scoped read model (AI-10.2).
+
+### 9.3 Semantic change understanding (pillars 2 + 6) — AI-11
+A **genuine-LLM** worker (ADR-011): the value is locked in code + prose semantics that no
+structural field exposes. Triggered on PR open/synchronize/ready-for-review, after enrichment
+supplies the diff.
+- **Semantic change summary (AI-11.1):** LLM reads the (funnel-/budget-bounded) diff and emits a
+  concise "what this PR actually does," **grounded in the changed files** — cited, never free
+  invention. Feeds drill-downs and the conversational layer; failure mode = phrasing.
+- **Intent-vs-diff divergence (AI-11.2):** compares the PR's **stated intent** (title, description,
+  linked-issue text) against the **actual diff** and emits a **divergence flag + evidence**
+  (which files/hunks contradict the stated scope), confidence-scored. A PR that says "rename
+  variables" but touches auth logic is flagged. The output is a *flag with evidence*, never a score
+  the user must trust on its own — it is **one input** to the GBM revert-risk model (§9.1) and a
+  **review-health signal** (pillar 2, surfaced for scrutiny, not blame).
+- **Safety:** diff + description are untrusted input (AI-7.1) — structurally fenced as data; the
+  worker emits only a schema-validated `{summary, divergence: bool, confidence, evidence_refs[]}`
+  object (AI-7.3), never an action. Idempotent per `(tenant_id, pr_node_id, head_sha, model_version,
+  prompt_version)`.
+- **Why LLM (vs. cheaper):** structural proxies (files-touched vs. label, description length) cannot
+  tell whether the *meaning* of the change matches the *stated* intent; this is exactly the
+  language/code-semantics case ADR-011 reserves for an LLM. Cost is bounded by the funnel + context
+  budgeter; large diffs are chunked and summarized hierarchically.
 
 ## 10. Proactive insight engine
 

@@ -13,6 +13,7 @@ Each ADR: context → decision → alternatives → consequences. Reference by I
 - ADR-008 — Model gateway & portability: LiteLLM + vLLM
 - ADR-009 — Analytical read store: ClickHouse
 - ADR-010 — Consistency model & idempotency contract
+- ADR-011 — "AI earns its place" (LLM-as-narrator, not decider)
 
 ---
 
@@ -169,3 +170,48 @@ idempotent keyed upserts gives effectively-once *results* without the overhead.
 **Consequences.** + Clear, defensible guarantees; safe replays/reprocessing; double-counting
 structurally prevented. − Consumers must *always* be written keyed/upserting (enforced in
 review); dashboards must tolerate bounded staleness (acceptable per NFR).
+
+---
+
+## ADR-011 — "AI earns its place" (LLM-as-narrator, not decider)
+
+**Context.** The product wedge is **trusted GitHub flow intelligence *with evidence*** (PRD §1):
+every metric is defined, reproducible, and drill-downable. The standing risk is that an LLM gets
+imposed where a deterministic or classical-ML approach is more reliable, cheaper, and more
+trustworthy — and worse, that an LLM ends up *producing a number a user trusts* or *a query/action
+against our data*, which the trust wedge cannot afford. We need a rule that decides, per feature,
+whether an LLM is genuinely required, applied the same way ADR-002 classifies metrics against
+signal-confidence.
+
+**Decision.** An LLM is used **only when all three hold**:
+1. The value is locked in genuinely **unstructured natural language or code semantics** that
+   structure/metadata cannot recover (GitHub's only such surfaces: prose threads, commit messages,
+   CI logs, the diff/code itself).
+2. **No deterministic or small-ML approach** reaches the needed quality/recall.
+3. The **failure mode is tolerable** — the LLM emits a **flag, label, cluster, summary, or
+   conversational rendering**, *never* a trusted number, a query against the DB, or an action.
+
+Numbers and decisions come from deterministic logic or classical ML (e.g., the GBM revert-risk
+model, ADR-008); **the LLM narrates over results it did not compute.** Classify every proposed AI
+feature against this test before building.
+
+**Litmus.** "Reads unstructured text/code → emits a flag, label, summary, or conversation" =
+candidate. "Produces a number / a query / an action" = **not** an LLM job.
+
+**Applying the test.**
+- *Earns it:* semantic change summary + **intent-vs-diff divergence** (AI-11), failure-theme cluster
+  labels (pillar 4), CI-log root-cause on the novel tail, review-comment substance classification,
+  NL→validated query (AI-6.1), decision/rationale extraction.
+- *Does NOT:* cycle time, flaky detection, bus factor, reviewer recommendation, the revert-risk
+  *score* — all deterministic or classical ML.
+- *LLM-as-narrator only:* the "why" summary on the GBM revert-risk score (ADR-008, pillar 6).
+
+**Alternatives.** (a) LLM-first everywhere — higher cost, hallucination on numbers users must
+trust, harder evals. (b) No LLM at all — loses genuinely-NL features (summarization, rationale
+extraction, NL Q&A).
+
+**Consequences.** + AI spend concentrated where it's irreplaceable; the cost funnel (AI-1.2) has
+less to filter. + Evals focus on flag/label/summary quality, not numeric correctness; every number
+stays deterministically reproducible (trust wedge protected). − Requires review discipline to
+reject "just use the LLM" shortcuts; some features wait on a small-ML model instead of a quick LLM
+prototype.

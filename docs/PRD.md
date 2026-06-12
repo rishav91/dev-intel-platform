@@ -12,6 +12,8 @@ GitHub alone holds enough to answer most engineering-flow and code-health questi
 
 **Product wedge.** The wedge is **trusted GitHub flow intelligence *with evidence*** — every metric is defined, sampled, and drill-downable to the exact PRs/reviews/CI runs behind it. The AI layer *supports* that wedge (summarize causes, cluster recurring blockers, answer grounded questions); it does not lead the narrative. Sensitive, surveillance-adjacent signals are governed by an explicit ethics posture (see `METRICS-ETHICS.md`); metric formulas and confidence are specified in `METRIC-SPEC.md`.
 
+**AI earns its place (ADR-011).** An LLM is used only where the value is locked in unstructured language or code semantics, no deterministic/classical-ML path reaches the needed quality, and the failure mode is tolerable — it emits a **flag, label, cluster, summary, or conversation, never a trusted number, a query, or an action**. Every number and decision comes from deterministic logic or classical ML (e.g., the GBM revert-risk model); the LLM only narrates over results it did not compute. This keeps the trust wedge intact and AI spend concentrated where it's irreplaceable.
+
 ## 2. Goals & non-goals
 
 **Goals**
@@ -49,13 +51,13 @@ A metric appears only once its inputs and minimum sample threshold are met (`MET
 ### Core pillars (P0 MVP)
 
 1. **PR flow & bottlenecks.** Decompose PR cycle time into stages — open→first-review, review-wait, rework, approve→merge — and surface idle time, stuck/stale PRs, and review-queue backlogs per repo/team.
-2. **Code review health.** Review depth (comments per PR), approval-without-comment ("rubber-stamp") rate, PR-size distribution and its correlation with cycle time and reverts, self-merge / no-review governance risk, and hotspot files (high churn × high revert).
+2. **Code review health.** Review depth (comments per PR), approval-without-comment ("rubber-stamp") rate, PR-size distribution and its correlation with cycle time and reverts, self-merge / no-review governance risk, and hotspot files (high churn × high revert). *(AI-assisted enrichment, P1: **intent-vs-diff divergence** — a PR whose stated intent diverges from what the code actually changes is flagged for scrutiny; see pillar 6 and `AI-ARCHITECTURE.md` §9.3.)*
 3. **CI reliability.** Check pass rate, time-to-green, and **flaky-check detection** (same check failing/retried across PRs) — CI as a quantified recurring blocker.
 4. **Recurring blockers.** Stuck PRs (idle > N days, blocked on review or failing checks), reopened issues/PRs, rework loops, and AI-clustered repeating failure themes from CI logs and review comments.
 ### Staged pillars
 
 5. **Contributor & collaboration** *(P1)*. Contributor **identity resolution** (across emails/accounts/bots), the collaboration graph (who reviews whom — silos/islands), knowledge concentration / bus-factor (review ownership vs. CODEOWNERS), and load signals (after-hours/weekend concentration). **Governed by the metrics-ethics posture** (`METRICS-ETHICS.md`): aggregate-not-rank, min-team-size suppression, individual opt-down.
-6. **Change risk & prediction** *(P1, AI)*. **PR revert-risk** scoring from size, files touched, review depth, and author history; "this PR resembles ones later reverted." **Incident** likelihood is *capability-gated* — only surfaced when deployment/incident signals are integrated; GitHub alone does not hold incident ground truth, so we do not claim it by default.
+6. **Change risk & prediction** *(P1, AI)*. **PR revert-risk** scoring from size, files touched, review depth, and author history; "this PR resembles ones later reverted." The score itself is a **GBM over structured features** (deterministic, backtested); an LLM supplies only the natural-language "why." **Intent-vs-diff divergence** (also feeds pillar 2) is a genuine-LLM signal: the model reads the diff against the PR's stated intent (title/description/linked issue) and flags mismatch — a PR that *says* "rename variables" but changes auth logic is both a review-health red flag and a risk input. **Incident** likelihood is *capability-gated* — only surfaced when deployment/incident signals are integrated; GitHub alone does not hold incident ground truth, so we do not claim it by default.
 7. **AI-authorship impact** *(P2, opt-in/experimental)*. Detection from commit metadata / `Co-authored-by` trailers and explicit tool labels is **low-recall**, so this is framed as an experimental, capability-gated metric (ideally fed by explicit tool/tenant-policy labels, not inference), not a default insight. Correlates declared AI authorship with rework/revert rates.
 
 **Explicitly excluded (thin signal):** delivery divergence, milestone/iteration burn, planned-vs-actual, scope creep.
