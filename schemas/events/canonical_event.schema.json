@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dev-intel.platform/schemas/events/canonical_event.schema.json",
+  "title": "CanonicalEvent",
+  "description": "Source-agnostic canonical domain event. Single source of truth for the event contract; Go/Python event types are generated from this.",
+  "type": "object",
+  "required": ["event_id", "tenant_id", "type", "source", "source_event_id", "occurred_at", "version", "payload"],
+  "additionalProperties": false,
+  "properties": {
+    "event_id":        { "type": "string", "format": "uuid" },
+    "tenant_id":       { "type": "string", "format": "uuid" },
+    "type": {
+      "type": "string",
+      "enum": [
+        "work_item.created",
+        "work_item.updated",
+        "work_item.state_changed",
+        "work_item.closed",
+        "review.submitted",
+        "comment.added",
+        "commit.observed",
+        "check.completed"
+      ]
+    },
+    "source":          { "type": "string", "enum": ["github"] },
+    "source_event_id": { "type": "string", "description": "X-GitHub-Delivery or (repo,node_id,updated_at) — idempotency key" },
+    "occurred_at":     { "type": "string", "format": "date-time" },
+    "version":         { "type": "integer", "minimum": 1 },
+    "payload":         { "type": "object", "description": "Type-specific body; for work_item.* it carries the work item fields." }
+  }
+}
