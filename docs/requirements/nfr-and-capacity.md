@@ -67,7 +67,7 @@ distributed/linearizable transactions anywhere (domain doesn't require it).
 | Analytical (ClickHouse) | grows with transitions/checks; columnar-compressed | time-series of stage transitions + check runs; partitioned by month. |
 | Vectors (pgvector → Qdrant) | ~hundreds of GB/yr | ~150k embeddable items/day × ~4–8 KB/vector (incl. chunks); excludes funnelled-out Slack-equivalent noise (CI logs/comments mostly filtered pre-embed). |
 | Search (OpenSearch) | moderate | PR/issue/review bodies. |
-| Raw archive (S3/MinIO) | **largest, cheapest** | full raw event archive for replay/reprocessing; lifecycle-tiered. |
+| Raw archive (S3/SeaweedFS) | **largest, cheapest** | full raw event archive for replay/reprocessing; lifecycle-tiered. |
 | Cache (Redis) | small, hot-set only | per-tenant read-model + LLM response cache. |
 
 **Embedding workload reality:** the naive "embed everything" number is ~25M Slack-equivalent

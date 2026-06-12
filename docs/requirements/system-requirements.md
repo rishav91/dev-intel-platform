@@ -103,7 +103,7 @@ Detailed: [`ai-layer-requirements.md`](ai-layer-requirements.md). Summary:
 
 | ID | Requirement | Priority |
 |----|-------------|----------|
-| NFR-8.1 | Polyglot persistence — the **P0-complete target** architecture: Kafka, Postgres+Citus (write), ClickHouse (metrics), OpenSearch (search), pgvector/Qdrant (vectors), Redis (cache), S3 (lake). **Phased in per `ROADMAP.md`, not all stood up at once** — Phase 0 = Kafka + Postgres/Citus + Redis + MinIO(S3); ClickHouse/OpenSearch arrive with the read models (Phase 2); vectors with the AI tier (Phase 3). | P0 |
+| NFR-8.1 | Polyglot persistence — the **P0-complete target** architecture: Kafka, Postgres+Citus (write), ClickHouse (metrics), OpenSearch (search), pgvector/Qdrant (vectors), Redis (cache), S3 (lake). **Phased in per `ROADMAP.md`, not all stood up at once** — Phase 0 = Kafka + Postgres/Citus + Redis + SeaweedFS(S3); ClickHouse/OpenSearch arrive with the read models (Phase 2); vectors with the AI tier (Phase 3). | P0 |
 | NFR-8.2 | Tenant sharding + read replicas. | P0 |
 | NFR-8.3 | Caching tiers (read-model + LLM response) with correct invalidation. | P0 |
 | NFR-8.4 | Horizontal scale to 100k DAU / 5k tenants with documented capacity model. | P1 |

@@ -265,7 +265,7 @@ flowchart LR
 
 | Data | Store | Why |
 |------|-------|-----|
-| Raw GitHub payloads | S3 / MinIO | Immutable, replay + lake. |
+| Raw GitHub payloads | S3 / SeaweedFS | Immutable, replay + lake. |
 | Canonical entities (write) | Postgres + Citus (tenant-sharded) | Transactional source of truth. |
 | Entity graph + identity map | Postgres (indexed adjacency) | Bounded fan-out; no separate graph DB in MVP (ADR-004). |
 | Flow / CI / review metrics | ClickHouse | Columnar windowed analytics. |

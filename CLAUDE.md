@@ -69,7 +69,7 @@ Define metrics against `METRIC-SPEC.md` (formula + exclusions + min sample). **E
 - **OLTP / write model:** PostgreSQL 16 + Citus, sharded by `tenant_id`; logical replication for read replicas.
 - **Analytical read store:** ClickHouse (cycle-time, CI, flow metrics).
 - **Cache:** Redis. **Search:** OpenSearch. **Vectors:** pgvector (MVP) → Qdrant (scale).
-- **Object store / data lake:** S3-compatible (MinIO local).
+- **Object store / data lake:** S3-compatible (SeaweedFS local; MinIO retired — community edition archived/unmaintained early 2026).
 - **AI gateway:** LiteLLM; **serving:** vLLM + TEI; hosted providers pluggable.
 - **PII:** Presidio. **AI telemetry:** Langfuse + OpenTelemetry.
 - **AuthN:** Keycloak/OIDC. **AuthZ:** OPA + Postgres RLS backstop. **Secrets:** Vault.

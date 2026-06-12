@@ -5,7 +5,7 @@ COMPOSE := docker compose -f deploy/docker-compose.dev.yml
 # (the superuser `devintel` bypasses RLS). See db/migrations/0003_app_role.sql.
 DSN ?= postgres://devintel_app:devintel_app@localhost:5432/devintel
 
-up:            ## start local stack (Redpanda, Postgres/Citus, Redis, MinIO)
+up:            ## start local stack (Redpanda, Postgres/Citus, Redis, SeaweedFS)
 	$(COMPOSE) up -d
 
 down:          ## stop stack and wipe volumes (re-applies migrations next up)

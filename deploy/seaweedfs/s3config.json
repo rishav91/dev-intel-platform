@@ -1,0 +1,11 @@
+{
+  "identities": [
+    {
+      "name": "devintel",
+      "credentials": [
+        { "accessKey": "devintel", "secretKey": "devintel12345" }
+      ],
+      "actions": ["Admin", "Read", "Write", "List", "Tagging"]
+    }
+  ]
+}

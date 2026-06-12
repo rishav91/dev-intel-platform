@@ -1,5 +1,5 @@
 # Phase 0 local stack — the walking-skeleton dependencies.
-# Brings up: Redpanda (Kafka API), Citus/Postgres, Redis, MinIO.
+# Brings up: Redpanda (Kafka API), Citus/Postgres, Redis, SeaweedFS (S3 API).
 # Keycloak/OIDC is deferred to Phase 2 (BFF); Phase 0 secures the spine via
 # GitHub webhook HMAC + tenant resolution + Postgres RLS.
 #
@@ -51,17 +51,29 @@ services:
       timeout: 3s
       retries: 20
 
-  minio:
-    image: minio/minio:RELEASE.2024-06-13T22-53-53Z
-    command: server /data --console-address ":9001"
-    environment:
-      MINIO_ROOT_USER: minio
-      MINIO_ROOT_PASSWORD: minio12345
+  # SeaweedFS replaces MinIO as the local S3-compatible object store: MinIO's
+  # community edition was archived (read-only, unmaintained) in early 2026.
+  # `server -s3` runs master+volume+filer+s3 in one process; app code talks the
+  # S3 API unchanged. S3 API on :8333, filer browser UI on :8888.
+  # Endpoint http://localhost:8333  accessKey devintel  secretKey devintel12345
+  seaweedfs:
+    image: chrislusf/seaweedfs:4.33
+    command:
+      - server
+      - -dir=/data
+      - -s3
+      - -s3.config=/etc/seaweedfs/s3config.json
+      - -ip.bind=0.0.0.0
+      - -master.volumeSizeLimitMB=1024
+    volumes:
+      - ./seaweedfs/s3config.json:/etc/seaweedfs/s3config.json:ro
     ports:
-      - "9000:9000"
-      - "9001:9001"
+      - "8333:8333"   # S3 API
+      - "8888:8888"   # filer browser UI
+    # S3 port has no reliable health route (paths parse as bucket names), so we
+    # probe the master status endpoint — same process, up within ~1s of S3.
     healthcheck:
-      test: ["CMD", "mc", "ready", "local"]
+      test: ["CMD-SHELL", "wget -q -O- http://localhost:9333/cluster/status >/dev/null 2>&1 || exit 1"]
       interval: 5s
       timeout: 5s
       retries: 20

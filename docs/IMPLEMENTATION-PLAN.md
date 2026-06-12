@@ -33,7 +33,7 @@ or backfill; only `work_item` table exists.
 
 - [ ] `make tidy` — resolve deps, generate `go.sum`. Fix any version drift in `go.mod`.
 - [ ] `make build && make vet` — fix compile/vet errors (the scaffold was authored without a local toolchain).
-- [ ] `make up` — stack healthy (Redpanda, Postgres/Citus, Redis, MinIO); confirm migrations applied.
+- [ ] `make up` — stack healthy (Redpanda, Postgres/Citus, Redis, SeaweedFS); confirm migrations applied.
 - [ ] Run `normalizer` + `webhook-gateway`; `make send-sample`.
 - [ ] Verify the `acme/app #482` row lands, scoped to the seeded tenant; same `trace_id` in both service logs.
 - [ ] `make test-isolation` passes (RLS gate green).
@@ -48,8 +48,8 @@ passes, and CI is green. (Phase 0 exit: FR-1.1–1.4, FR-2.1–2.5, NFR-7.2)
 
 Small foundation-completing tasks before breadth.
 
-- [ ] **Raw archive to S3/MinIO.** Gateway (or a tiny archiver consumer) writes every `raw.github`
-      payload to MinIO keyed `tenant/date/delivery`. Enables replay (ADR-010). *(FR-2.4)*
+- [ ] **Raw archive to S3/SeaweedFS.** Gateway (or a tiny archiver consumer) writes every `raw.github`
+      payload to SeaweedFS keyed `tenant/date/delivery`. Enables replay (ADR-010). *(FR-2.4)*
 - [ ] **Delivery-id dedup.** Explicit idempotency on `X-GitHub-Delivery` (processed-deliveries
       table or Redis set) so redeliveries are provably no-ops, not just upsert-absorbed. *(FR-2.2, ADR-010)*
 - [ ] **Dead-letter + retry.** Normalizer routes permanently-bad messages to a DLQ topic; transient

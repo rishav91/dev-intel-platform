@@ -26,7 +26,7 @@ flowchart TB
 
     subgraph BUS[Event backbone]
         K[(Apache Kafka<br/>raw + canonical topics)]
-        S3[(S3 / MinIO<br/>raw archive + lake)]
+        S3[(S3 / SeaweedFS<br/>raw archive + lake)]
     end
 
     subgraph CORR[Correlation tier - Flink]

@@ -4,11 +4,11 @@ Full system, sequenced so the **P0 slice is a coherent first product**. Each pha
 
 > **Stack is phased in, not stood up all at once.** NFR-8.1 lists the *P0-complete target*
 > persistence set; each phase below adds only what it needs. Phase 0 = Kafka + Postgres/Citus +
-> Redis + MinIO(S3); ClickHouse/OpenSearch land in Phase 2, vectors in Phase 3.
+> Redis + SeaweedFS(S3); ClickHouse/OpenSearch land in Phase 2, vectors in Phase 3.
 
 ## Phase 0 — Foundations (walking skeleton)
 **Goal:** one GitHub event flows end-to-end through the spine.
-- Monorepo + CI + local stack (docker-compose: Kafka, Postgres+Citus, Redis, MinIO).
+- Monorepo + CI + local stack (docker-compose: Kafka, Postgres+Citus, Redis, SeaweedFS).
 - AuthN (Keycloak/OIDC) + tenant model + RLS + data-access layer with injected tenant/scope.
 - GitHub App webhook gateway → Kafka → normalizer → canonical event → Postgres write model.
 - OTel tracing wired across services.
