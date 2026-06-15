@@ -14,9 +14,13 @@ dev-intel-platform/
 │   ├── ADRs.md
 │   ├── ROADMAP.md
 │   ├── REPO-LAYOUT.md
+│   ├── FRONTEND.md
 │   └── requirements/
 │       ├── system-requirements.md
 │       └── ai-layer-requirements.md
+│
+├── apps/
+│   └── web/                       # TypeScript — Vite+React SPA over the GraphQL BFF (Phase 2; see FRONTEND.md)
 │
 ├── services/
 │   ├── webhook-gateway/           # Go — verify + ack GitHub webhooks → Kafka (Phase 0)
