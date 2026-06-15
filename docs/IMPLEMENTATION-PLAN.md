@@ -80,30 +80,46 @@ Small foundation-completing tasks before breadth.
 Ordered by dependency. **P1.A is a prerequisite for everything else.**
 
 ### P1.A — Schema + GitHub App foundation
-- [ ] **Migrations for the rest of the write model** with RLS (FORCE) on each: `review`,
-      `check_run`, `contributor`, `identity_link`, `state_transition`, `entity_edge` (schemas in
-      `DATA-MODEL.md`). Add the red-team test to cover each new table. *(FR-3.1)*
-- [ ] **GitHub App installation auth.** Mint app JWT (signed with the App private key from Vault),
-      exchange for short-lived installation access tokens, cache + refresh per installation. *(NFR-6.2)*
-- [ ] **Rate-limit budgeting.** Per-installation token bucket tracking REST remaining + GraphQL
-      point cost; back off on `X-RateLimit-Remaining`. *(FR-2.3)*
-- [ ] **Capability detection.** On connect/first sync, detect whether a repo emits
-      deployments/releases; persist per-tenant capability flags (gates DORA). *(FR-2.10)*
+- [x] **Migrations for the rest of the write model** with RLS (FORCE) on each: `review`,
+      `check_run`, `contributor`, `identity_link`, `state_transition`, `entity_edge` (+ `repo_capability`),
+      schemas per `DATA-MODEL.md`. Indexes from §6; idempotency uniques per ADR-010. Red-team test
+      extended (table-driven) to cover every new table. `db/migrations/0006_write_model.sql`. *(FR-3.1)*
+- [x] **GitHub App installation auth.** `libs/go/githubapp`: mints the app JWT (RS256, hand-rolled —
+      no JWT dep) and exchanges it for short-lived installation tokens, cached + refreshed per
+      installation (per-install lock coalesces refreshes). Private key loaded from PEM (PKCS#1/#8);
+      Vault is the prod source, file path the dev seam. *(NFR-6.2)*
+- [x] **Rate-limit budgeting.** Per-installation `Budget` (REST + GraphQL pools) fed from
+      `X-RateLimit-*` headers; `Reserve` defers calls at a safety floor until the window resets, with
+      optimistic local debit between header refreshes. `Registry` holds one budget per install. *(FR-2.3)*
+- [x] **Capability detection.** `Client.DetectRepoCapabilities` probes deployments/releases via the
+      budgeted, authenticated client; `PersistRepoCapability` upserts per-tenant flags into
+      `repo_capability` (gates DORA). *(FR-2.10)*
 
 **Done when:** all canonical entities have tables + RLS, and the connector can authenticate and
-call the GitHub API within budget.
+call the GitHub API within budget. ✅ — live GitHub calls await a registered App + token (no creds in
+dev); the auth/budget/detection logic is unit-tested against an injected transport + clock.
 
 ### P1.B — Full event coverage
 Extend `connector/github` + `normalizer` from PR-only to the full STRONG signal set.
-- [ ] Add canonical event types + payloads: `review.submitted`, `comment.added`, `commit.observed`,
-      `work_item.*` for issues, `check.completed`. *(update `schemas/events`)*
-- [ ] Handle webhooks: `pull_request_review`, `pull_request_review_comment`, `issue_comment`,
-      `push`, `issues`, `check_run`/`check_suite`/`status`. Map each to canonical + persist
-      (`review`, `check_run`, work items for issues). *(FR-2.1, FR-2.5)*
-- [ ] Idempotent upserts on each new entity (keys per `DATA-MODEL.md`). *(ADR-010)*
+- [x] Add canonical event types + payloads: `review.submitted`, `comment.added`, `commit.observed`,
+      `work_item.*` for issues, `check.completed`. (`events.EventType` constants + per-entity payload
+      builders in the normalizer; the schema enum already listed them.) *(`schemas/events`)*
+- [x] Handle webhooks: `pull_request_review`, `pull_request_review_comment`, `issue_comment`,
+      `push`, `issues`, `check_run`/`status`. Map each to canonical + persist (`review`, `check_run`,
+      work items for issues/commits). `check_suite` is recognized but skipped (aggregate of
+      `check_run` — persisting it would double-count CI). Comments have no table (DATA-MODEL §2): they
+      emit `comment.added` for downstream. *(FR-2.1, FR-2.5)*
+- [x] Idempotent upserts on each new entity (keys per `DATA-MODEL.md`): `review`/`check_run` on
+      `(tenant, source_id)`, work items on `(tenant, repo, type, node_id)`. Each emitted canonical
+      event carries the entity's natural id as `source_event_id` (a push of N commits → N
+      independently-idempotent events). *(ADR-010)*
 
 **Done when:** a repo's PRs, reviews, comments, commits, issues, and checks all land as canonical
-entities, tenant-scoped.
+entities, tenant-scoped. ✅ — connector dispatches all STRONG event types; normalizer persists
+multi-entity in one atomic tenant-scoped tx (delivery dedup + upserts + outbox). A review ensures its
+parent PR exists (handles out-of-order delivery) and resolves the reviewer to a contributor via the
+deterministic login-match subset of P1.F identity resolution; check_run `work_item_id` is left NULL
+for head-SHA correlation in P1.E. Connector coverage is table-tested across every event type.
 
 ### P1.C — GraphQL enrichment (`connector-github` service)
 Webhooks omit fields we need (e.g. `changed_files`, full diffs context).

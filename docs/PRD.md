@@ -1,8 +1,8 @@
 # PRD — Dev Intelligence Platform (GitHub-only)
 
-**Status:** Draft v2 (GitHub-only) · **Owner:** Rishav · **Last updated:** 2026-06
+**Owner:** Rishav · **Last updated:** 2026-06
 
-> Supersedes the four-source v1 (preserved in `../docs_bkp/`). Scope is now **GitHub as single source, source-agnostic design**.
+> Scope is **GitHub as single source, source-agnostic design**.
 
 ## 1. Problem
 
@@ -17,6 +17,7 @@ GitHub alone holds enough to answer most engineering-flow and code-health questi
 ## 2. Goals & non-goals
 
 **Goals**
+
 - Ingest GitHub completely (PRs, reviews, commits, issues, CI checks) per tenant org, via live webhooks + **rate-budgeted, resumable API backfill** as the source of truth for tenant history. (GH Archive is *not* a tenant-history path — it carries only the public timeline; it's used for public-repo/demo data, OSS tenants, benchmarking, and synthetic-scale testing.)
 - Build an intra-GitHub entity graph + contributor identity resolution.
 - **MVP delivers the four core pillars** (1–4 in §4) with evidence and drill-down; pillars 5–7 are **staged capabilities** (see §4).
@@ -25,6 +26,7 @@ GitHub alone holds enough to answer most engineering-flow and code-health questi
 - Keep the architecture **source-agnostic** so a 2nd source can be added later (not built now).
 
 **Non-goals (v2)**
+
 - Any source other than GitHub (design-ready, not implemented).
 - **Delivery divergence / planned-vs-actual** and any Projects v2 / Milestones / Iteration metric — excluded by the signal-confidence principle (thin signal).
 - Writing code or acting in GitHub on the user's behalf.
@@ -32,13 +34,15 @@ GitHub alone holds enough to answer most engineering-flow and code-health questi
 
 ## 3. Personas
 
-| Persona | Scope | Primary need |
-|---------|-------|--------------|
-| **Eng Executive** | Portfolio | Where is delivery flow at risk across teams, and why? |
-| **Eng Manager / Team Lead** | Team | What's blocking my team's PRs? Who's overloaded? Is review healthy? |
-| **Platform / DevEx** | Cross-team | Where is CI flaky? Where is friction concentrated? |
-| **IC Developer** | Self / team | Reduce review/CI friction; fair view of my own flow. |
-| **Tenant Admin** | Org config | Connect GitHub org, manage roles, control data/retention. |
+
+| Persona                     | Scope       | Primary need                                                        |
+| --------------------------- | ----------- | ------------------------------------------------------------------- |
+| **Eng Executive**           | Portfolio   | Where is delivery flow at risk across teams, and why?               |
+| **Eng Manager / Team Lead** | Team        | What's blocking my team's PRs? Who's overloaded? Is review healthy? |
+| **Platform / DevEx**        | Cross-team  | Where is CI flaky? Where is friction concentrated?                  |
+| **IC Developer**            | Self / team | Reduce review/CI friction; fair view of my own flow.                |
+| **Tenant Admin**            | Org config  | Connect GitHub org, manage roles, control data/retention.           |
+
 
 RBAC scopes (portfolio / team / individual) gate what each persona sees — and what the AI may retrieve on their behalf.
 
@@ -54,11 +58,12 @@ A metric appears only once its inputs and minimum sample threshold are met (`MET
 2. **Code review health.** Review depth (comments per PR), approval-without-comment ("rubber-stamp") rate, PR-size distribution and its correlation with cycle time and reverts, self-merge / no-review governance risk, and hotspot files (high churn × high revert). *(AI-assisted enrichment, P1: **intent-vs-diff divergence** — a PR whose stated intent diverges from what the code actually changes is flagged for scrutiny; see pillar 6 and `AI-ARCHITECTURE.md` §9.3.)*
 3. **CI reliability.** Check pass rate, time-to-green, and **flaky-check detection** (same check failing/retried across PRs) — CI as a quantified recurring blocker.
 4. **Recurring blockers.** Stuck PRs (idle > N days, blocked on review or failing checks), reopened issues/PRs, rework loops, and AI-clustered repeating failure themes from CI logs and review comments.
+
 ### Staged pillars
 
-5. **Contributor & collaboration** *(P1)*. Contributor **identity resolution** (across emails/accounts/bots), the collaboration graph (who reviews whom — silos/islands), knowledge concentration / bus-factor (review ownership vs. CODEOWNERS), and load signals (after-hours/weekend concentration). **Governed by the metrics-ethics posture** (`METRICS-ETHICS.md`): aggregate-not-rank, min-team-size suppression, individual opt-down.
-6. **Change risk & prediction** *(P1, AI)*. **PR revert-risk** scoring from size, files touched, review depth, and author history; "this PR resembles ones later reverted." The score itself is a **GBM over structured features** (deterministic, backtested); an LLM supplies only the natural-language "why." **Intent-vs-diff divergence** (also feeds pillar 2) is a genuine-LLM signal: the model reads the diff against the PR's stated intent (title/description/linked issue) and flags mismatch — a PR that *says* "rename variables" but changes auth logic is both a review-health red flag and a risk input. **Incident** likelihood is *capability-gated* — only surfaced when deployment/incident signals are integrated; GitHub alone does not hold incident ground truth, so we do not claim it by default.
-7. **AI-authorship impact** *(P2, opt-in/experimental)*. Detection from commit metadata / `Co-authored-by` trailers and explicit tool labels is **low-recall**, so this is framed as an experimental, capability-gated metric (ideally fed by explicit tool/tenant-policy labels, not inference), not a default insight. Correlates declared AI authorship with rework/revert rates.
+1. **Contributor & collaboration** *(P1)*. Contributor **identity resolution** (across emails/accounts/bots), the collaboration graph (who reviews whom — silos/islands), knowledge concentration / bus-factor (review ownership vs. CODEOWNERS), and load signals (after-hours/weekend concentration). **Governed by the metrics-ethics posture** (`METRICS-ETHICS.md`): aggregate-not-rank, min-team-size suppression, individual opt-down.
+2. **Change risk & prediction** *(P1, AI)*. **PR revert-risk** scoring from size, files touched, review depth, and author history; "this PR resembles ones later reverted." The score itself is a **GBM over structured features** (deterministic, backtested); an LLM supplies only the natural-language "why." **Intent-vs-diff divergence** (also feeds pillar 2) is a genuine-LLM signal: the model reads the diff against the PR's stated intent (title/description/linked issue) and flags mismatch — a PR that *says* "rename variables" but changes auth logic is both a review-health red flag and a risk input. **Incident** likelihood is *capability-gated* — only surfaced when deployment/incident signals are integrated; GitHub alone does not hold incident ground truth, so we do not claim it by default.
+3. **AI-authorship impact** *(P2, opt-in/experimental)*. Detection from commit metadata / `Co-authored-by` trailers and explicit tool labels is **low-recall**, so this is framed as an experimental, capability-gated metric (ideally fed by explicit tool/tenant-policy labels, not inference), not a default insight. Correlates declared AI authorship with rework/revert rates.
 
 **Explicitly excluded (thin signal):** delivery divergence, milestone/iteration burn, planned-vs-actual, scope creep.
 
@@ -73,11 +78,13 @@ A metric appears only once its inputs and minimum sample threshold are met (`MET
 
 ## 6. Signal-confidence scope (the governing rule)
 
-| Tier | Signals | Used for | Policy |
-|------|---------|----------|--------|
-| **STRONG** | PRs, reviews, review comments, commits, issues+comments+labels+reopen, check runs/statuses, branches | All pillars (4 core + staged) | Core; always built. |
-| **CAPABILITY-GATED** | Deployments/Environments, Releases | Deploy frequency, deploy lead time, MTTR | Activated per-tenant only if detected; never a core promise. |
-| **EXCLUDED (thin)** | Projects v2, Milestones, Iterations | (delivery divergence, planned-vs-actual) | Not built. |
+
+| Tier                 | Signals                                                                                              | Used for                                 | Policy                                                       |
+| -------------------- | ---------------------------------------------------------------------------------------------------- | ---------------------------------------- | ------------------------------------------------------------ |
+| **STRONG**           | PRs, reviews, review comments, commits, issues+comments+labels+reopen, check runs/statuses, branches | All pillars (4 core + staged)            | Core; always built.                                          |
+| **CAPABILITY-GATED** | Deployments/Environments, Releases                                                                   | Deploy frequency, deploy lead time, MTTR | Activated per-tenant only if detected; never a core promise. |
+| **EXCLUDED (thin)**  | Projects v2, Milestones, Iterations                                                                  | (delivery divergence, planned-vs-actual) | Not built.                                                   |
+
 
 Rationale: a metric that's wrong half the time because the underlying field is inconsistently populated erodes trust more than the metric adds. Fewer, trustworthy metrics > many shaky ones.
 
@@ -86,11 +93,13 @@ Rationale: a metric that's wrong half the time because the underlying field is i
 ## 7. Success metrics
 
 **Product**
+
 - Time-to-first-insight after onboarding < 30 min (P0).
 - ≥ 60% of proactive insights marked useful by week 4.
 - "Explain this slow PR" answered with correct citations in < 3s median.
 
 **Technical / SLO**
+
 - Webhook → canonical event p95 < 60s.
 - Insight freshness (event → updated projection) p95 < 5 min.
 - Zero cross-tenant data exposure (continuously red-teamed).
@@ -99,14 +108,16 @@ Rationale: a metric that's wrong half the time because the underlying field is i
 
 ## 8. Risks
 
-| Risk | Mitigation |
-|------|------------|
-| Contributor identity resolution errors (bots, multiple emails) | Confidence-scored resolution + human override; deterministic, re-runnable. |
-| CI-log / comment volume drives AI cost | Cost funnel + precompute + response cache + per-tenant budgets. |
-| Tenant data leakage via AI retrieval | Two-level (tenant+RBAC) scoping injected structurally + RLS backstop + red-team CI. |
-| Prompt injection from PR/issue/comment text | Instruction/data separation, no action-from-content, injection suite in CI. |
-| GitHub API rate limits throttle backfill | Per-tenant budgeting, GraphQL batching, resumable/checkpointed backfill; GH Archive accelerates *public*-repo backfill only (private repos aren't in it). |
-| Over-claiming incident risk / AI-authorship | Pillar 6 incident half capability-gated on deploy/incident signals; pillar 7 opt-in/experimental with confidence language (see §4). |
-| Over-claiming on capability-gated signals | Signal-confidence gating; metric hidden unless its signal is present. |
+
+| Risk                                                           | Mitigation                                                                                                                                                |
+| -------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Contributor identity resolution errors (bots, multiple emails) | Confidence-scored resolution + human override; deterministic, re-runnable.                                                                                |
+| CI-log / comment volume drives AI cost                         | Cost funnel + precompute + response cache + per-tenant budgets.                                                                                           |
+| Tenant data leakage via AI retrieval                           | Two-level (tenant+RBAC) scoping injected structurally + RLS backstop + red-team CI.                                                                       |
+| Prompt injection from PR/issue/comment text                    | Instruction/data separation, no action-from-content, injection suite in CI.                                                                               |
+| GitHub API rate limits throttle backfill                       | Per-tenant budgeting, GraphQL batching, resumable/checkpointed backfill; GH Archive accelerates *public*-repo backfill only (private repos aren't in it). |
+| Over-claiming incident risk / AI-authorship                    | Pillar 6 incident half capability-gated on deploy/incident signals; pillar 7 opt-in/experimental with confidence language (see §4).                       |
+| Over-claiming on capability-gated signals                      | Signal-confidence gating; metric hidden unless its signal is present.                                                                                     |
+
 
 See `ARCHITECTURE.md` for how the design addresses each.

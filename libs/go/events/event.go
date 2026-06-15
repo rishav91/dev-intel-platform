@@ -26,7 +26,8 @@ const (
 	HeaderDLQReason = "dlq-reason"
 )
 
-// EventType enumerates canonical event types (subset implemented in Phase 0).
+// EventType enumerates canonical event types. Mirrors the enum in
+// schemas/events/canonical_event.schema.json — keep them in sync.
 type EventType string
 
 const (
@@ -34,6 +35,11 @@ const (
 	WorkItemUpdated      EventType = "work_item.updated"
 	WorkItemStateChanged EventType = "work_item.state_changed"
 	WorkItemClosed       EventType = "work_item.closed"
+	// P1.B — full STRONG-signal coverage beyond pull_request.
+	ReviewSubmitted EventType = "review.submitted"
+	CommentAdded    EventType = "comment.added"
+	CommitObserved  EventType = "commit.observed"
+	CheckCompleted  EventType = "check.completed"
 )
 
 // Source identifies the origin system. GitHub only in this phase.
