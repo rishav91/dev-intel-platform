@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"testing"
 
@@ -56,7 +57,7 @@ func TestEnrichPassThroughWhenDisabled(t *testing.T) {
 	const body = `{"number":1,"pull_request":{"created_at":"2026-06-12T10:00:00Z"},` +
 		`"repository":{"full_name":"acme/app"},"installation":{"id":42}}`
 
-	out, status, occurred := c.enrich(nil, "pull_request", []byte(body), "trace")
+	out, status, occurred := c.enrich(context.Background(), "pull_request", []byte(body))
 	if status != statusDisabled {
 		t.Errorf("status: want %q got %q", statusDisabled, status)
 	}
@@ -72,7 +73,7 @@ func TestEnrichPassThroughWhenDisabled(t *testing.T) {
 func TestEnrichSkipsNonPR(t *testing.T) {
 	c := &connector{client: nil}
 	body := []byte(`{"action":"created"}`)
-	out, status, _ := c.enrich(nil, "issue_comment", body, "trace")
+	out, status, _ := c.enrich(context.Background(), "issue_comment", body)
 	if status != statusSkipped {
 		t.Errorf("status: want %q got %q", statusSkipped, status)
 	}

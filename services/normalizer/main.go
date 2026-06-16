@@ -42,6 +42,9 @@ import (
 	"github.com/dev-intel/platform/libs/go/kafka"
 	"github.com/dev-intel/platform/libs/go/observability"
 	"github.com/dev-intel/platform/libs/go/tenancy"
+
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 )
 
 const (
@@ -76,6 +79,17 @@ func main() {
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
+
+	shutdownTracing, err := observability.Init(ctx, "normalizer")
+	if err != nil {
+		log.Error("tracing init", "err", err)
+		os.Exit(1)
+	}
+	defer func() {
+		sctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_ = shutdownTracing(sctx)
+	}()
 
 	store, err := tenancy.New(ctx, dsn)
 	if err != nil {
@@ -149,12 +163,19 @@ type normalizer struct {
 }
 
 func (n *normalizer) process(ctx context.Context, msg kafka.Message) error {
-	traceID := msg.Headers[events.HeaderTraceID]
+	// Continue the trace from upstream (gateway → connector) and open this stage's
+	// span; the slog handler stamps trace_id/span_id from this ctx.
+	ctx = observability.Extract(ctx, msg.Headers)
+	ctx, span := observability.Tracer().Start(ctx, "normalizer.process",
+		trace.WithSpanKind(trace.SpanKindConsumer),
+		trace.WithAttributes(attribute.String("github.event", msg.Headers[events.HeaderGitHubEvent])))
+	defer span.End()
+
 	raw := connector.RawEvent{
 		DeliveryID: msg.Headers[events.HeaderGitHubDeliv],
 		EventType:  msg.Headers[events.HeaderGitHubEvent],
 		Body:       msg.Value,
-		TraceID:    traceID,
+		TraceID:    observability.TraceID(ctx),
 	}
 
 	res, err := n.src.Normalize(raw)
@@ -164,7 +185,7 @@ func (n *normalizer) process(ctx context.Context, msg kafka.Message) error {
 		return permanentError{err}
 	}
 	if res.Skip || res.Empty() {
-		n.log.Info("skipped event", "event", raw.EventType, "trace_id", traceID)
+		n.log.InfoContext(ctx, "skipped event", "event", raw.EventType)
 		return nil
 	}
 
@@ -173,7 +194,7 @@ func (n *normalizer) process(ctx context.Context, msg kafka.Message) error {
 		// Unknown installation: not "bad", just not onboarded yet — the raw is
 		// archived and replayable, so drop (commit) rather than DLQ-spam.
 		if errors.Is(err, tenancy.ErrUnknownInstallation) {
-			n.log.Warn("unknown installation; dropping", "installation", res.InstallationID, "trace_id", traceID)
+			n.log.WarnContext(ctx, "unknown installation; dropping", "installation", res.InstallationID)
 			return nil
 		}
 		return err // transient (e.g. DB down)
@@ -192,10 +213,10 @@ func (n *normalizer) process(ctx context.Context, msg kafka.Message) error {
 		if !fresh {
 			return errDuplicate // rolls back; original write already committed
 		}
-		return n.persist(ctx, tx, tenantID, traceID, res)
+		return n.persist(ctx, tx, tenantID, res)
 	})
 	if errors.Is(err, errDuplicate) {
-		n.log.Info("duplicate delivery; no-op", "delivery", raw.DeliveryID, "trace_id", traceID)
+		n.log.InfoContext(ctx, "duplicate delivery; no-op", "delivery", raw.DeliveryID)
 		return nil
 	}
 	if err != nil {
@@ -206,15 +227,22 @@ func (n *normalizer) process(ctx context.Context, msg kafka.Message) error {
 
 // enqueueOutbox stages a canonical event for publication in the same tx as the
 // write. The relay (services/outbox-relay) drains it to Kafka at-least-once.
-func enqueueOutbox(ctx context.Context, tx pgx.Tx, tenantID string, ev events.CanonicalEvent, traceID string) error {
+//
+// The trace context is persisted on the row (traceparent), so the relay — a
+// separate process draining asynchronously — can resume this same trace when it
+// publishes, keeping the span lineage unbroken across the DB hop.
+func enqueueOutbox(ctx context.Context, tx pgx.Tx, tenantID string, ev events.CanonicalEvent) error {
 	payload, err := json.Marshal(ev)
 	if err != nil {
 		return err
 	}
+	carrier := map[string]string{}
+	observability.Inject(ctx, carrier)
 	_, err = tx.Exec(ctx, `
-INSERT INTO outbox (tenant_id, event_id, topic, kafka_key, trace_id, payload)
-VALUES ($1, $2, $3, $4, $5, $6)`,
-		tenantID, ev.EventID, events.TopicCanonical, tenantID, traceID, payload)
+INSERT INTO outbox (tenant_id, event_id, topic, kafka_key, trace_id, traceparent, payload)
+VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+		tenantID, ev.EventID, events.TopicCanonical, tenantID,
+		observability.TraceID(ctx), carrier[events.HeaderTraceParent], payload)
 	return err
 }
 
@@ -252,7 +280,7 @@ ON CONFLICT (tenant_id, delivery_id) DO NOTHING`,
 // delivery commits atomically (ADR-012). Each emitted event carries the entity's
 // own natural id as source_event_id (not the delivery id), so a push of N commits
 // yields N independently-idempotent canonical events.
-func (n *normalizer) persist(ctx context.Context, tx pgx.Tx, tenantID, traceID string, res connector.Result) error {
+func (n *normalizer) persist(ctx context.Context, tx pgx.Tx, tenantID string, res connector.Result) error {
 	// Upsert work items first and remember each one's id by node id, so reviews in
 	// the same delivery can link to their PR. Items with an empty Event are
 	// ensure-only link targets (e.g. the PR a review references): persisted if
@@ -276,11 +304,11 @@ func (n *normalizer) persist(ctx context.Context, tx pgx.Tx, tenantID, traceID s
 			continue
 		}
 		ev := events.New(tenantID, wi.Event, wi.NodeID, wi.OccurredAt, workItemPayload(wi))
-		if err := enqueueOutbox(ctx, tx, tenantID, ev, traceID); err != nil {
+		if err := enqueueOutbox(ctx, tx, tenantID, ev); err != nil {
 			return err
 		}
-		n.log.Info("normalized", "type", ev.Type, "repo", wi.Repo, "number", wi.Number,
-			"tenant_id", tenantID, "trace_id", traceID)
+		n.log.InfoContext(ctx, "normalized", "type", ev.Type, "repo", wi.Repo, "number", wi.Number,
+			"tenant_id", tenantID)
 	}
 
 	for _, rv := range res.Reviews {
@@ -291,7 +319,7 @@ func (n *normalizer) persist(ctx context.Context, tx pgx.Tx, tenantID, traceID s
 			return permanentError{fmt.Errorf("review %s: parent PR %s not in delivery", rv.SourceID, rv.PRNodeID)}
 		}
 		if rv.ReviewerLogin == "" {
-			n.log.Warn("review without reviewer login; skipping", "review", rv.SourceID, "trace_id", traceID)
+			n.log.WarnContext(ctx, "review without reviewer login; skipping", "review", rv.SourceID)
 			continue
 		}
 		reviewerID, err := resolveContributor(ctx, tx, tenantID, rv.ReviewerLogin)
@@ -302,11 +330,11 @@ func (n *normalizer) persist(ctx context.Context, tx pgx.Tx, tenantID, traceID s
 			return err
 		}
 		ev := events.New(tenantID, events.ReviewSubmitted, rv.SourceID, rv.SubmittedAt, reviewPayload(rv))
-		if err := enqueueOutbox(ctx, tx, tenantID, ev, traceID); err != nil {
+		if err := enqueueOutbox(ctx, tx, tenantID, ev); err != nil {
 			return err
 		}
-		n.log.Info("normalized", "type", events.ReviewSubmitted, "repo", rv.Repo,
-			"tenant_id", tenantID, "trace_id", traceID)
+		n.log.InfoContext(ctx, "normalized", "type", events.ReviewSubmitted, "repo", rv.Repo,
+			"tenant_id", tenantID)
 	}
 
 	for _, cr := range res.CheckRuns {
@@ -318,22 +346,22 @@ func (n *normalizer) persist(ctx context.Context, tx pgx.Tx, tenantID, traceID s
 			occurred = cr.StartedAt
 		}
 		ev := events.New(tenantID, events.CheckCompleted, cr.SourceID, deref(occurred), checkRunPayload(cr))
-		if err := enqueueOutbox(ctx, tx, tenantID, ev, traceID); err != nil {
+		if err := enqueueOutbox(ctx, tx, tenantID, ev); err != nil {
 			return err
 		}
-		n.log.Info("normalized", "type", events.CheckCompleted, "repo", cr.Repo, "name", cr.Name,
-			"tenant_id", tenantID, "trace_id", traceID)
+		n.log.InfoContext(ctx, "normalized", "type", events.CheckCompleted, "repo", cr.Repo, "name", cr.Name,
+			"tenant_id", tenantID)
 	}
 
 	// Comments have no table (DATA-MODEL §2); they exist only as canonical events
 	// for downstream consumers (review depth, blocker detection in the AI layer).
 	for _, cm := range res.Comments {
 		ev := events.New(tenantID, events.CommentAdded, cm.SourceID, cm.CreatedAt, commentPayload(cm))
-		if err := enqueueOutbox(ctx, tx, tenantID, ev, traceID); err != nil {
+		if err := enqueueOutbox(ctx, tx, tenantID, ev); err != nil {
 			return err
 		}
-		n.log.Info("normalized", "type", events.CommentAdded, "repo", cm.Repo,
-			"tenant_id", tenantID, "trace_id", traceID)
+		n.log.InfoContext(ctx, "normalized", "type", events.CommentAdded, "repo", cm.Repo,
+			"tenant_id", tenantID)
 	}
 
 	return nil

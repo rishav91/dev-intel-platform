@@ -83,6 +83,41 @@ func (c *Client) get(ctx context.Context, installationID int64, path string) (*h
 	return c.Do(ctx, installationID, req, 1)
 }
 
+// InstallationRepo is a repository an installation can access.
+type InstallationRepo struct {
+	FullName string
+	Private  bool
+}
+
+// ListInstallationRepos lists the repositories the installation can access
+// (the "selected repositories", or all repos in the account). Used to discover a
+// real repo to target for enrichment/backfill smoke tests via /installation/repositories.
+func (c *Client) ListInstallationRepos(ctx context.Context, installationID int64) ([]InstallationRepo, error) {
+	resp, err := c.get(ctx, installationID, "/installation/repositories?per_page=100")
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("status %d: %s", resp.StatusCode, body)
+	}
+	var out struct {
+		Repositories []struct {
+			FullName string `json:"full_name"`
+			Private  bool   `json:"private"`
+		} `json:"repositories"`
+	}
+	if err := json.Unmarshal(body, &out); err != nil {
+		return nil, fmt.Errorf("decode repositories: %w", err)
+	}
+	repos := make([]InstallationRepo, 0, len(out.Repositories))
+	for _, r := range out.Repositories {
+		repos = append(repos, InstallationRepo{FullName: r.FullName, Private: r.Private})
+	}
+	return repos, nil
+}
+
 // Capabilities is the per-repo presence of capability-gated signals (FR-2.10).
 type Capabilities struct {
 	Deployments bool

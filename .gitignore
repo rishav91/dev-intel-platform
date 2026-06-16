@@ -20,4 +20,5 @@ __pycache__/
 
 # Local data volumes / logs
 /data/
+/logs/
 *.log

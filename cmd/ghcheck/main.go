@@ -21,6 +21,7 @@ import (
 
 func main() {
 	list := flag.Bool("list", false, "list this App's installations (id + account) and exit")
+	repos := flag.Bool("repos", false, "list repositories accessible to -installation and exit")
 	installation := flag.Int64("installation", 0, "GitHub App installation id")
 	repo := flag.String("repo", "", "owner/name to probe for capabilities")
 	flag.Parse()
@@ -51,8 +52,29 @@ func main() {
 		return
 	}
 
+	if *repos {
+		if *installation == 0 {
+			fmt.Fprintln(os.Stderr, "usage: ghcheck -repos -installation <id>")
+			os.Exit(2)
+		}
+		rs, err := client.ListInstallationRepos(ctx, *installation)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "list repositories:", err)
+			os.Exit(1)
+		}
+		if len(rs) == 0 {
+			fmt.Println("no repositories accessible to this installation")
+			return
+		}
+		fmt.Println("repositories:")
+		for _, r := range rs {
+			fmt.Printf("  %s (private=%v)\n", r.FullName, r.Private)
+		}
+		return
+	}
+
 	if *installation == 0 || *repo == "" {
-		fmt.Fprintln(os.Stderr, "usage: ghcheck -list | ghcheck -installation <id> -repo <owner/name>")
+		fmt.Fprintln(os.Stderr, "usage: ghcheck -list | ghcheck -repos -installation <id> | ghcheck -installation <id> -repo <owner/name>")
 		os.Exit(2)
 	}
 

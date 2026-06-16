@@ -68,8 +68,13 @@ Small foundation-completing tasks before breadth.
       red-team isolation test, which needs Postgres.)
 - [x] **Config + graceful shutdown.** Env parsing centralized in `libs/go/config`; gateway drains via
       `http.Server.Shutdown` on SIGTERM; archiver/normalizer exit cleanly on `signal.NotifyContext`.
-- [ ] **OTel (optional now).** Swap the slog trace-id for real OpenTelemetry spans exported via OTLP
-      (the seam is isolated in `libs/go/observability`). **Deferred** to keep momentum. *(NFR-7.2)*
+- [x] **OTel end-to-end tracing.** Swapped the ad-hoc slog trace-id for real OpenTelemetry spans:
+      `libs/go/observability` now does `Init` (OTLP/HTTP exporter + W3C propagator), `Inject`/`Extract`
+      over Kafka headers, and a slog handler that stamps `trace_id`/`span_id` from span context. The
+      gateway starts the trace; every service continues it (`traceparent` header), including across the
+      async outbox DB hop (new `outbox.traceparent` column, 0007 — the relay re-extracts and publishes a
+      child span). Dev stack gained Tempo + Loki + Promtail + Grafana (trace⇄log correlation by
+      `trace_id`). Degrades to no-export if no collector. See `docs/OBSERVABILITY.md`. *(NFR-7.2)*
 
 **Done when:** raw events are archived + replayable, redeliveries are idempotent, and unit tests cover the spine.
 

@@ -34,6 +34,9 @@ import (
 	"github.com/dev-intel/platform/libs/go/githubapp"
 	"github.com/dev-intel/platform/libs/go/kafka"
 	"github.com/dev-intel/platform/libs/go/observability"
+
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 )
 
 const (
@@ -63,6 +66,17 @@ func main() {
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
+
+	shutdownTracing, err := observability.Init(ctx, "connector-github")
+	if err != nil {
+		log.Error("tracing init", "err", err)
+		return
+	}
+	defer func() {
+		sctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_ = shutdownTracing(sctx)
+	}()
 
 	// Enrichment needs App credentials. Absent (dev, or before an App is
 	// registered) → run as a pure pass-through so the pipeline still flows.
@@ -135,10 +149,17 @@ type prEnvelope struct {
 }
 
 func (c *connector) process(ctx context.Context, msg kafka.Message) error {
+	// Continue the trace started at the gateway: extract upstream context from the
+	// inbound headers, then open this stage's span as a child of it.
+	ctx = observability.Extract(ctx, msg.Headers)
 	eventType := msg.Headers[events.HeaderGitHubEvent]
-	traceID := msg.Headers[events.HeaderTraceID]
+	ctx, span := observability.Tracer().Start(ctx, "connector.enrich",
+		trace.WithSpanKind(trace.SpanKindConsumer),
+		trace.WithAttributes(attribute.String("github.event", eventType)))
+	defer span.End()
 
-	body, status, occurredAt := c.enrich(ctx, eventType, msg.Value, traceID)
+	body, status, occurredAt := c.enrich(ctx, eventType, msg.Value)
+	span.SetAttributes(attribute.String("enrich.status", status))
 
 	headers := make(map[string]string, len(msg.Headers)+2)
 	for k, v := range msg.Headers {
@@ -149,20 +170,21 @@ func (c *connector) process(ctx context.Context, msg kafka.Message) error {
 		// Stamp source time so downstream ordering uses it, not arrival (P1.C).
 		headers[events.HeaderOccurredAt] = occurredAt.UTC().Format(time.RFC3339)
 	}
+	observability.Inject(ctx, headers) // re-stamp traceparent for this span
 	return c.writer.Write(ctx, msg.Key, body, headers)
 }
 
 // enrich returns the (possibly augmented) body, the enrich-status, and the source
 // event time. It never returns an error: enrichment is best-effort and falls back
 // to pass-through, so a GitHub problem can't stall ingestion.
-func (c *connector) enrich(ctx context.Context, eventType string, body []byte, traceID string) ([]byte, string, time.Time) {
+func (c *connector) enrich(ctx context.Context, eventType string, body []byte) ([]byte, string, time.Time) {
 	if eventType != "pull_request" {
 		return body, statusSkipped, time.Time{} // only PRs need enrichment today
 	}
 
 	var env prEnvelope
 	if err := json.Unmarshal(body, &env); err != nil || env.Installation.ID == 0 || env.Repository.FullName == "" {
-		c.log.Warn("cannot address enrichment; passing through", "trace_id", traceID)
+		c.log.WarnContext(ctx, "cannot address enrichment; passing through")
 		return body, statusFailed, time.Time{}
 	}
 	occurredAt := env.PullRequest.UpdatedAt
@@ -178,22 +200,22 @@ func (c *connector) enrich(ctx context.Context, eventType string, body []byte, t
 	if err != nil {
 		var rl *githubapp.RateLimitedError
 		if errors.As(err, &rl) {
-			c.log.Warn("rate limited; passing through unenriched", "wait", rl.RetryAfter,
-				"repo", env.Repository.FullName, "number", env.Number, "trace_id", traceID)
+			c.log.WarnContext(ctx, "rate limited; passing through unenriched", "wait", rl.RetryAfter,
+				"repo", env.Repository.FullName, "number", env.Number)
 			return body, statusRateLimited, occurredAt
 		}
-		c.log.Warn("enrichment failed; passing through", "err", err,
-			"repo", env.Repository.FullName, "number", env.Number, "trace_id", traceID)
+		c.log.WarnContext(ctx, "enrichment failed; passing through", "err", err,
+			"repo", env.Repository.FullName, "number", env.Number)
 		return body, statusFailed, occurredAt
 	}
 
 	merged, err := mergeEnrichment(body, enr)
 	if err != nil {
-		c.log.Warn("merge failed; passing through", "err", err, "trace_id", traceID)
+		c.log.WarnContext(ctx, "merge failed; passing through", "err", err)
 		return body, statusFailed, occurredAt
 	}
-	c.log.Info("enriched", "repo", env.Repository.FullName, "number", env.Number,
-		"files", len(enr.Files), "commits", len(enr.CommitOIDs), "trace_id", traceID)
+	c.log.InfoContext(ctx, "enriched", "repo", env.Repository.FullName, "number", env.Number,
+		"files", len(enr.Files), "commits", len(enr.CommitOIDs))
 	return merged, statusEnriched, occurredAt
 }
 
@@ -217,7 +239,7 @@ func (c *connector) fetchEnrichment(ctx context.Context, env prEnvelope) (github
 		files, perr := c.client.FetchPullRequestPatches(ctx, env.Installation.ID, env.Repository.FullName, env.Number, c.patchMaxBytes)
 		if perr != nil {
 			// Patches are a bonus; keep the GraphQL enrichment if they fail.
-			c.log.Warn("patch fetch failed; keeping metadata-only enrichment", "err", perr,
+			c.log.WarnContext(ctx, "patch fetch failed; keeping metadata-only enrichment", "err", perr,
 				"repo", env.Repository.FullName, "number", env.Number)
 		} else {
 			enr.Files = files // REST file list carries churn + patch text

@@ -24,6 +24,12 @@ const (
 	// inspection/replay rather than dropped silently.
 	TopicDeadLetter = "raw.github.dlq"
 
+	// HeaderTraceParent carries W3C trace context (OpenTelemetry) so a request is
+	// one trace across every service + the Kafka/outbox hops. This is the header
+	// propagation actually depends on. See libs/go/observability.
+	HeaderTraceParent = "traceparent"
+	// HeaderTraceID is the human-readable 32-hex trace id, set alongside
+	// traceparent for convenience (log/debug); nothing parses it for propagation.
 	HeaderTraceID     = "trace-id"
 	HeaderGitHubEvent = "x-github-event"
 	HeaderGitHubDeliv = "x-github-delivery"

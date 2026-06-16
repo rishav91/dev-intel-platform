@@ -78,5 +78,64 @@ services:
       timeout: 5s
       retries: 20
 
-# Note: migrations are auto-applied by the citus image on first boot via
-# /docker-entrypoint-initdb.d. To re-apply after changes: `docker compose down -v` then up.
+  # --- Observability (Tier 2): end-to-end traces + correlated logs ----------
+  # The host-run Go services (make run-*) export OTLP spans to Tempo on :4318 and
+  # tee their JSON logs to ./logs, which Promtail tails into Loki. Grafana stitches
+  # both: a trace's waterfall, and per-span links to that request's log lines.
+  # Open Grafana at http://localhost:3000 (anonymous admin). See docs/OBSERVABILITY.md.
+  tempo:
+    image: grafana/tempo:2.6.1
+    command: ["-config.file=/etc/tempo/tempo.yaml"]
+    volumes:
+      - ./observability/tempo.yaml:/etc/tempo/tempo.yaml:ro
+    ports:
+      - "3200:3200"   # Tempo query API (Grafana → Tempo)
+      - "4318:4318"   # OTLP/HTTP — services export traces here
+      - "4317:4317"   # OTLP/gRPC
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O- http://localhost:3200/ready >/dev/null 2>&1 || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  loki:
+    image: grafana/loki:3.2.1
+    command: ["-config.file=/etc/loki/loki-config.yaml"]
+    volumes:
+      - ./observability/loki-config.yaml:/etc/loki/loki-config.yaml:ro
+    ports:
+      - "3100:3100"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O- http://localhost:3100/ready >/dev/null 2>&1 || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  promtail:
+    image: grafana/promtail:3.2.1
+    command: ["-config.file=/etc/promtail/promtail-config.yaml"]
+    volumes:
+      - ./observability/promtail-config.yaml:/etc/promtail/promtail-config.yaml:ro
+      # Host log dir the run-* targets tee into (created by the Makefile).
+      - ../logs:/var/log/devintel:ro
+    depends_on:
+      - loki
+
+  grafana:
+    image: grafana/grafana:11.3.0
+    environment:
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: "Admin"
+      GF_AUTH_DISABLE_LOGIN_FORM: "true"
+    volumes:
+      - ./observability/grafana/datasources.yaml:/etc/grafana/provisioning/datasources/datasources.yaml:ro
+    ports:
+      - "3000:3000"
+    depends_on:
+      - tempo
+      - loki
+
+# Note: migrations are auto-applied by the citus image ONLY on first boot of a
+# fresh volume (via /docker-entrypoint-initdb.d). To apply migrations added later
+# to an already-running DB, use `make migrate` (tracked + idempotent) — no need to
+# wipe. A full reset is still `make down` (down -v) then `make up`.
