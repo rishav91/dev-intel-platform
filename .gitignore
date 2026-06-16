@@ -5,6 +5,8 @@
 .env
 .env.*
 !.env.example
+/secrets/
+*.pem
 
 # Go build output
 /bin/
@@ -18,4 +20,5 @@ __pycache__/
 
 # Local data volumes / logs
 /data/
+/logs/
 *.log

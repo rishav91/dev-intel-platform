@@ -21,6 +21,9 @@ import (
 	"github.com/dev-intel/platform/libs/go/events"
 	"github.com/dev-intel/platform/libs/go/kafka"
 	"github.com/dev-intel/platform/libs/go/observability"
+
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 )
 
 func main() {
@@ -33,6 +36,19 @@ func main() {
 	// SIGTERM/SIGINT cancels ctx → triggers graceful drain below.
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
+
+	// Tracing: the gateway starts the trace for each webhook; it propagates from
+	// here through Kafka to every downstream service. See libs/go/observability.
+	shutdownTracing, err := observability.Init(ctx, "webhook-gateway")
+	if err != nil {
+		log.Error("tracing init", "err", err)
+		os.Exit(1)
+	}
+	defer func() {
+		sctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_ = shutdownTracing(sctx)
+	}()
 
 	writer := kafka.NewWriter(brokers, events.TopicRawGitHub)
 	defer writer.Close()
@@ -96,25 +112,35 @@ func (s *server) handleGitHub(w http.ResponseWriter, r *http.Request) {
 
 	delivery := r.Header.Get("X-GitHub-Delivery")
 	eventType := r.Header.Get("X-GitHub-Event")
-	traceID := observability.NewTraceID()
+
+	// Start the trace here — this is the edge. The span context is injected into
+	// the Kafka headers below, so the whole pipeline shares one trace.
+	ctx, span := observability.Tracer().Start(r.Context(), "webhook.receive",
+		trace.WithSpanKind(trace.SpanKindServer),
+		trace.WithAttributes(
+			attribute.String("github.event", eventType),
+			attribute.String("github.delivery", delivery),
+		))
+	defer span.End()
 
 	headers := map[string]string{
-		events.HeaderTraceID:     traceID,
 		events.HeaderGitHubEvent: eventType,
 		events.HeaderGitHubDeliv: delivery,
+		events.HeaderTraceID:     observability.TraceID(ctx), // human-readable
 	}
+	observability.Inject(ctx, headers) // W3C traceparent for propagation
 
-	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	writeCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 
 	// Key by delivery id → idempotent, ordered per delivery.
-	if err := s.writer.Write(ctx, delivery, body, headers); err != nil {
-		s.log.Error("kafka write failed", "err", err, "delivery", delivery, "trace_id", traceID)
+	if err := s.writer.Write(writeCtx, delivery, body, headers); err != nil {
+		s.log.ErrorContext(ctx, "kafka write failed", "err", err, "delivery", delivery)
 		http.Error(w, "enqueue failed", http.StatusServiceUnavailable) // 503 → GitHub retries
 		return
 	}
 
-	s.log.Info("accepted", "event", eventType, "delivery", delivery, "trace_id", traceID)
+	s.log.InfoContext(ctx, "accepted", "event", eventType, "delivery", delivery)
 	w.WriteHeader(http.StatusAccepted)
 }
 

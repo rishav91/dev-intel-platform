@@ -1,0 +1,33 @@
+# Promtail — tails the host-run services' JSON logs and ships them to Loki.
+#
+# The Go services run on the host (make run-*), not in containers, so we cannot
+# scrape Docker stdout. Instead the run targets tee each service's output to
+# ./logs/<service>.log (mounted here at /var/log/devintel), and Promtail follows
+# those files. trace_id stays a parsed field (not a label) to avoid high
+# cardinality; Grafana filters on it via `| json | trace_id="..."`.
+server:
+  http_listen_port: 9080
+
+positions:
+  filename: /tmp/positions.yaml
+
+clients:
+  - url: http://loki:3100/loki/api/v1/push
+
+scrape_configs:
+  - job_name: devintel-services
+    static_configs:
+      - targets: [localhost]
+        labels:
+          job: devintel
+          __path__: /var/log/devintel/*.log
+    pipeline_stages:
+      - json:
+          expressions:
+            service: service
+            level: level
+      # Low-cardinality labels only. trace_id remains in the line, queryable
+      # via `| json`.
+      - labels:
+          service:
+          level:

@@ -25,6 +25,8 @@ import (
 	"github.com/dev-intel/platform/libs/go/objectstore"
 	"github.com/dev-intel/platform/libs/go/observability"
 	"github.com/dev-intel/platform/libs/go/tenancy"
+
+	"go.opentelemetry.io/otel/trace"
 )
 
 const (
@@ -41,6 +43,17 @@ func main() {
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
+
+	shutdownTracing, err := observability.Init(ctx, "archiver")
+	if err != nil {
+		log.Error("tracing init", "err", err)
+		os.Exit(1)
+	}
+	defer func() {
+		sctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_ = shutdownTracing(sctx)
+	}()
 
 	store, err := tenancy.New(ctx, dsn)
 	if err != nil {
@@ -111,8 +124,13 @@ type installationEnvelope struct {
 }
 
 func (a *archiver) archive(ctx context.Context, msg kafka.Message) error {
+	// Archiver is a parallel consumer of raw.github; join the request's trace.
+	ctx = observability.Extract(ctx, msg.Headers)
+	ctx, span := observability.Tracer().Start(ctx, "archiver.archive",
+		trace.WithSpanKind(trace.SpanKindConsumer))
+	defer span.End()
+
 	delivery := msg.Headers[events.HeaderGitHubDeliv]
-	traceID := msg.Headers[events.HeaderTraceID]
 	if delivery == "" {
 		delivery = msg.Key
 	}
@@ -129,9 +147,9 @@ func (a *archiver) archive(ctx context.Context, msg kafka.Message) error {
 		return err
 	}
 	if written {
-		a.log.Info("archived", "key", key, "delivery", delivery, "trace_id", traceID)
+		a.log.InfoContext(ctx, "archived", "key", key, "delivery", delivery)
 	} else {
-		a.log.Info("already archived (redelivery)", "key", key, "delivery", delivery, "trace_id", traceID)
+		a.log.InfoContext(ctx, "already archived (redelivery)", "key", key, "delivery", delivery)
 	}
 	return nil
 }

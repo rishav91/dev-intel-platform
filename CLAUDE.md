@@ -35,9 +35,11 @@ When adding any metric, classify its inputs against this table first. Excluded =
 | `docs/METRICS-ETHICS.md` | Contributor-analytics ethics posture, k-anonymity suppression, individual opt-down, "won't build" list. |
 | `docs/GITHUB-APP.md` | Required GitHub App permissions/events, degraded behavior, capability-gated metric gating. |
 | `docs/API-CONTRACTS.md` | Webhook intake, GraphQL insight queries, AI/chat, internal gRPC. |
+| `docs/OBSERVABILITY.md` | End-to-end tracing + log correlation: OTel spans across services + the Kafka/outbox hops, Tempo/Loki/Grafana dev stack. |
 | `docs/ADRs.md` | Decision records incl. single-source/source-agnostic, signal-confidence, consistency & idempotency. |
 | `docs/ROADMAP.md` | MVP-first phased build sequence. |
 | `docs/REPO-LAYOUT.md` | Proposed monorepo / service structure. |
+| `docs/FRONTEND.md` | Web client plan: Vite+React SPA over the BFF; pages × personas × pillars; built in Phase 2. |
 | `docs/REVIEW-ACTIONS.md` | Tracked doc-change checklist from the product/architecture critique. |
 | `docs/requirements/system-requirements.md` | Prioritized functional/non-functional requirements (P0/P1/P2). |
 | `docs/requirements/nfr-and-capacity.md` | Consolidated NFRs with derivations + capacity/storage sizing. |

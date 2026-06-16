@@ -26,6 +26,8 @@ import (
 	"github.com/dev-intel/platform/libs/go/events"
 	"github.com/dev-intel/platform/libs/go/kafka"
 	"github.com/dev-intel/platform/libs/go/observability"
+
+	"go.opentelemetry.io/otel/trace"
 )
 
 func main() {
@@ -39,6 +41,17 @@ func main() {
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
+
+	shutdownTracing, err := observability.Init(ctx, "outbox-relay")
+	if err != nil {
+		log.Error("tracing init", "err", err)
+		os.Exit(1)
+	}
+	defer func() {
+		sctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_ = shutdownTracing(sctx)
+	}()
 
 	pool, err := pgxpool.New(ctx, dsn)
 	if err != nil {
@@ -84,13 +97,14 @@ type relay struct {
 }
 
 type outboxRow struct {
-	id      int64
-	tenant  string
-	eventID string
-	topic   string
-	key     string
-	traceID string
-	payload []byte
+	id          int64
+	tenant      string
+	eventID     string
+	topic       string
+	key         string
+	traceID     string
+	traceparent string // W3C trace context persisted by the normalizer
+	payload     []byte
 }
 
 // drainBatch publishes up to batchSize pending rows and returns how many it
@@ -104,7 +118,7 @@ func (r *relay) drainBatch(ctx context.Context) (int, error) {
 	defer tx.Rollback(ctx) //nolint:errcheck // no-op after Commit
 
 	rows, err := tx.Query(ctx, `
-SELECT outbox_id, tenant_id, event_id, topic, kafka_key, trace_id, payload
+SELECT outbox_id, tenant_id, event_id, topic, kafka_key, trace_id, traceparent, payload
 FROM outbox
 WHERE published_at IS NULL
 ORDER BY outbox_id
@@ -116,13 +130,16 @@ FOR UPDATE SKIP LOCKED`, r.batchSize)
 	var batch []outboxRow
 	for rows.Next() {
 		var o outboxRow
-		var trace *string
-		if err := rows.Scan(&o.id, &o.tenant, &o.eventID, &o.topic, &o.key, &trace, &o.payload); err != nil {
+		var traceID, traceparent *string
+		if err := rows.Scan(&o.id, &o.tenant, &o.eventID, &o.topic, &o.key, &traceID, &traceparent, &o.payload); err != nil {
 			rows.Close()
 			return 0, err
 		}
-		if trace != nil {
-			o.traceID = *trace
+		if traceID != nil {
+			o.traceID = *traceID
+		}
+		if traceparent != nil {
+			o.traceparent = *traceparent
 		}
 		batch = append(batch, o)
 	}
@@ -136,19 +153,29 @@ FOR UPDATE SKIP LOCKED`, r.batchSize)
 
 	published := make([]int64, 0, len(batch))
 	for _, o := range batch {
+		// Resume the trace the normalizer persisted on the row, then open a publish
+		// span as its child — so the relay hop appears in the same end-to-end trace
+		// despite running asynchronously in a separate process.
+		rowCtx := observability.Extract(ctx, map[string]string{events.HeaderTraceParent: o.traceparent})
+		rowCtx, span := observability.Tracer().Start(rowCtx, "relay.publish",
+			trace.WithSpanKind(trace.SpanKindProducer))
+
 		headers := map[string]string{}
+		observability.Inject(rowCtx, headers) // traceparent for downstream canonical consumers
 		if o.traceID != "" {
 			headers[events.HeaderTraceID] = o.traceID
 		}
-		if err := r.writer.Write(ctx, o.topic, o.key, o.payload, headers); err != nil {
+		if err := r.writer.Write(rowCtx, o.topic, o.key, o.payload, headers); err != nil {
 			// Stop at the first publish failure so we don't skip ahead and break
 			// per-tenant order; rows already published this pass are committed,
 			// the rest retry next pass.
-			r.log.Error("publish failed; will retry remainder", "err", err, "event_id", o.eventID)
+			span.End()
+			r.log.ErrorContext(rowCtx, "publish failed; will retry remainder", "err", err, "event_id", o.eventID)
 			break
 		}
 		published = append(published, o.id)
-		r.log.Info("published", "topic", o.topic, "event_id", o.eventID, "tenant_id", o.tenant, "trace_id", o.traceID)
+		r.log.InfoContext(rowCtx, "published", "topic", o.topic, "event_id", o.eventID, "tenant_id", o.tenant)
+		span.End()
 	}
 
 	if len(published) > 0 {
