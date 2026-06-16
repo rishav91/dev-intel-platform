@@ -148,6 +148,65 @@ func TestNormalizePullRequest(t *testing.T) {
 	}
 }
 
+// A pull_request carrying an _enrichment block (added by connector-github, P1.C)
+// must overlay authoritative counts and surface commit OIDs + file churn.
+func TestNormalizePullRequestEnriched(t *testing.T) {
+	const enriched = `{
+	  "action": "opened", "number": 482,
+	  "pull_request": {
+	    "node_id": "PR_1", "number": 482, "title": "Add feature", "state": "open", "merged": false,
+	    "changed_files": 1, "additions": 5, "deletions": 1,
+	    "created_at": "2026-06-11T10:00:00Z", "user": { "login": "alice" }
+	  },
+	  "repository": { "full_name": "acme/app" },
+	  "installation": { "id": 42424242 },
+	  "_enrichment": {
+	    "additions": 210, "deletions": 64, "changed_files": 2,
+	    "commit_oids": ["sha1","sha2"],
+	    "files": [{"path":"a.go","additions":100,"deletions":4},{"path":"b.go","additions":110,"deletions":60}]
+	  }
+	}`
+
+	s := New()
+	res, err := s.Normalize(connector.RawEvent{EventType: "pull_request", Body: []byte(enriched)})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	wi := res.WorkItems[0]
+	// Enrichment counts override the (stale) webhook counts.
+	if wi.Additions != 210 || wi.Deletions != 64 || wi.ChangedFiles != 2 {
+		t.Errorf("enriched counts not applied: +%d -%d files=%d", wi.Additions, wi.Deletions, wi.ChangedFiles)
+	}
+	if len(wi.CommitOIDs) != 2 || wi.CommitOIDs[1] != "sha2" {
+		t.Errorf("commit oids: %v", wi.CommitOIDs)
+	}
+	if len(wi.Files) != 2 || wi.Files[1].Path != "b.go" || wi.Files[1].Deletions != 60 {
+		t.Errorf("file churn: %+v", wi.Files)
+	}
+}
+
+// Real pull_request webhooks (and our sample fixture) carry the PR number at the
+// event's top level; the nested pull_request object may omit it. The work item
+// must still get the right number.
+func TestNormalizePullRequestTopLevelNumber(t *testing.T) {
+	const body = `{
+	  "action": "opened", "number": 482,
+	  "pull_request": {
+	    "node_id": "PR_1", "title": "x", "state": "open", "merged": false,
+	    "created_at": "2026-06-11T10:00:00Z", "user": { "login": "alice" }
+	  },
+	  "repository": { "full_name": "acme/app" },
+	  "installation": { "id": 42424242 }
+	}`
+	res, err := New().Normalize(connector.RawEvent{EventType: "pull_request", Body: []byte(body)})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got := res.WorkItems[0].Number; got != 482 {
+		t.Errorf("number: want 482 (from top level), got %d", got)
+	}
+}
+
 func TestNormalizeReview(t *testing.T) {
 	const submitted = `{
 	  "action": "submitted",

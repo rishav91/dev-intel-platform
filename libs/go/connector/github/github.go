@@ -90,12 +90,24 @@ type pullRequest struct {
 	User         actor      `json:"user"`
 }
 
+// prEnrichment mirrors the `_enrichment` block the connector-github enricher
+// (P1.C) injects into the raw PR payload before it reaches the normalizer. Absent
+// for un-enriched events (degraded mode / before the enricher ran).
+type prEnrichment struct {
+	Additions    *int                   `json:"additions"`
+	Deletions    *int                   `json:"deletions"`
+	ChangedFiles *int                   `json:"changed_files"`
+	CommitOIDs   []string               `json:"commit_oids"`
+	Files        []connector.FileChange `json:"files"`
+}
+
 type prPayload struct {
-	Action       string       `json:"action"`
-	Number       int          `json:"number"`
-	PullRequest  pullRequest  `json:"pull_request"`
-	Repository   repository   `json:"repository"`
-	Installation installation `json:"installation"`
+	Action       string        `json:"action"`
+	Number       int           `json:"number"`
+	PullRequest  pullRequest   `json:"pull_request"`
+	Repository   repository    `json:"repository"`
+	Installation installation  `json:"installation"`
+	Enrichment   *prEnrichment `json:"_enrichment"`
 }
 
 func normalizePullRequest(body []byte) (connector.Result, error) {
@@ -107,7 +119,14 @@ func normalizePullRequest(body []byte) (connector.Result, error) {
 		return connector.Result{}, fmt.Errorf("github: missing installation id")
 	}
 
+	// The PR number lives at the event's top level; some payloads omit it from the
+	// nested pull_request object. Prefer the top-level value when the nested one is absent.
+	if p.PullRequest.Number == 0 {
+		p.PullRequest.Number = p.Number
+	}
+
 	wi := prWorkItem(p.PullRequest, p.Repository.FullName)
+	applyEnrichment(&wi, p.Enrichment)
 	wi.Event = workItemEvent(p.Action)
 	wi.OccurredAt = workItemOccurredAt(wi)
 
@@ -115,6 +134,27 @@ func normalizePullRequest(body []byte) (connector.Result, error) {
 		InstallationID: p.Installation.ID,
 		WorkItems:      []connector.WorkItem{wi},
 	}, nil
+}
+
+// applyEnrichment overlays GraphQL-fetched detail onto a PR work item. The
+// authoritative size counts override the webhook's (which can be stale or absent
+// on non-PR events carrying a PR object); commit OIDs + file churn ride into the
+// canonical payload for downstream correlation/analysis.
+func applyEnrichment(wi *connector.WorkItem, enr *prEnrichment) {
+	if enr == nil {
+		return
+	}
+	if enr.ChangedFiles != nil {
+		wi.ChangedFiles = *enr.ChangedFiles
+	}
+	if enr.Additions != nil {
+		wi.Additions = *enr.Additions
+	}
+	if enr.Deletions != nil {
+		wi.Deletions = *enr.Deletions
+	}
+	wi.CommitOIDs = enr.CommitOIDs
+	wi.Files = enr.Files
 }
 
 // prWorkItem builds a canonical work item from a PR object. Event/OccurredAt are

@@ -123,15 +123,27 @@ for head-SHA correlation in P1.E. Connector coverage is table-tested across ever
 
 ### P1.C — GraphQL enrichment (`connector-github` service)
 Webhooks omit fields we need (e.g. `changed_files`, full diffs context).
-- [ ] Stand up `services/connector-github`: consume `raw.github`, enrich via GraphQL (batched),
-      emit enriched events to `normalizer`. Respects the rate budget from P1.A. *(FR-2.1)*
-- [ ] Backfill-vs-live ordering: stamp `occurred_at` from source, not arrival.
+- [x] Stood up `services/connector-github`: consumes `raw.github`, enriches `pull_request` events via
+      a single batched GraphQL query (`libs/go/githubapp.EnrichPullRequest` — authoritative
+      additions/deletions/changedFiles, commit OIDs, per-file churn), injects an `_enrichment` block,
+      and emits to `enriched.github`. The normalizer now consumes `enriched.github`. Respects the P1.A
+      rate budget (GraphQL pool via `Client.GraphQL`, observing `rateLimit{}` cost). **Degraded mode
+      (FR-2.8):** no creds / non-PR event / GraphQL error / exhausted budget → pass through unchanged,
+      stamped with an `enrich-status` header, so the pipeline never stalls. *(FR-2.1)*
+- [x] Backfill-vs-live ordering: the enricher stamps `occurred-at` (source PR `updated_at`/`created_at`)
+      as a header, and canonical events already carry a source-derived `occurred_at` (P1.B), not arrival.
+- [x] Per-file **patches** surfaced via `Client.FetchPullRequestPatches` (REST — GraphQL can't return
+      patch text), size-capped, behind `ENRICH_PATCHES` (off by default to keep the log lean; Phase-3
+      AI-11 turns it on). Commit OIDs + file churn ride in the canonical PR payload for P1.E/Phase-3.
 
-**Done when:** enriched PRs carry size/review metadata the raw webhook lacked.
+**Done when:** enriched PRs carry size/review metadata the raw webhook lacked. ✅ — GraphQL client +
+enrichment are unit-tested against an injected transport; the enricher's merge/pass-through/skip paths
+are unit-tested; the connector reads the `_enrichment` block (authoritative counts override the
+webhook's). Live GraphQL awaits a registered App (same posture as P1.A).
 
-> Forward-pointer: the **diff/patch** fetched here is the input the Phase-3 semantic change
-> understanding worker (AI-11: change summary + intent-vs-diff divergence) consumes. Make sure
-> enrichment can surface per-file patches, not just counts.
+> Forward-pointer: the **diff/patch** fetched here (REST, `ENRICH_PATCHES`) is the input the Phase-3
+> semantic change understanding worker (AI-11: change summary + intent-vs-diff divergence) consumes.
+> Enrichment surfaces per-file patches, not just counts.
 
 ### P1.D — State-transition derivation
 Implement the `STATE-MACHINE.md` FSM.

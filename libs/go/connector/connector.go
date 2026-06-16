@@ -44,6 +44,23 @@ type WorkItem struct {
 	Event events.EventType
 	// OccurredAt is the source timestamp for the emitted canonical event.
 	OccurredAt time.Time
+
+	// Enriched fields (P1.C) — present when the connector-github enricher attached
+	// GraphQL detail the webhook lacked. CommitOIDs feed PR↔commit correlation
+	// (P1.E); Files feed review-health hotspots and Phase-3 semantic analysis.
+	// They ride in the canonical event payload, not work_item columns.
+	CommitOIDs []string
+	Files      []FileChange
+}
+
+// FileChange is one file's churn in a PR (P1.C enrichment). Patch is the unified
+// diff, populated only when patch fetching is enabled upstream.
+type FileChange struct {
+	Path      string `json:"path"`
+	Additions int    `json:"additions"`
+	Deletions int    `json:"deletions"`
+	Patch     string `json:"patch,omitempty"`
+	Truncated bool   `json:"truncated,omitempty"`
 }
 
 // Review is a normalized PR review (review.submitted). It links to its PR by

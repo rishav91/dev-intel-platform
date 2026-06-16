@@ -1,4 +1,4 @@
-.PHONY: up down logs build vet test test-isolation test-integration run-gateway run-normalizer run-archiver run-relay send-sample ghcheck tidy
+.PHONY: up down logs build vet test test-isolation test-integration run-gateway run-connector run-normalizer run-archiver run-relay send-sample ghcheck tidy
 
 COMPOSE := docker compose -f deploy/docker-compose.dev.yml
 # Runtime/test connections use the least-privilege app role so RLS engages
@@ -43,7 +43,10 @@ test-integration: ## live GitHub API test (needs GITHUB_APP_ID + key + GITHUB_TE
 run-gateway:
 	go run ./services/webhook-gateway
 
-run-normalizer:
+run-connector: ## consume raw.github → enrich PRs via GraphQL → enriched.github (P1.C; pass-through without creds)
+	go run ./services/connector-github
+
+run-normalizer: ## consume enriched.github → canonical events (needs run-connector upstream)
 	go run ./services/normalizer
 
 run-archiver:  ## consume raw.github → archive payloads to SeaweedFS (replay net)

@@ -1,5 +1,6 @@
-// normalizer consumes raw.github, normalizes via the GitHub connector, resolves
-// the tenant from the installation id, dedups the delivery, and — in one tx —
+// normalizer consumes enriched.github (raw.github after the connector-github
+// enricher, P1.C), normalizes via the GitHub connector, resolves the tenant from
+// the installation id, dedups the delivery, and — in one tx —
 // upserts the canonical entities (work items, reviews, check runs) under RLS and
 // stages a canonical event per entity in the outbox. The outbox relay publishes
 // them to Kafka. At-least-once: process fully, then commit the offset.
@@ -83,14 +84,17 @@ func main() {
 	}
 	defer store.Close()
 
-	reader := kafka.NewReader(brokers, group, events.TopicRawGitHub)
+	// Consume the enriched stream (P1.C): connector-github sits between raw.github
+	// and here, attaching GraphQL detail. In degraded mode it passes events through
+	// unenriched, so this topic always carries the full stream regardless.
+	reader := kafka.NewReader(brokers, group, events.TopicEnrichedGitHub)
 	defer reader.Close()
 	dlq := kafka.NewWriter(brokers, events.TopicDeadLetter)
 	defer dlq.Close()
 
 	src := ghconn.New()
 	n := &normalizer{log: log, src: src, store: store, dlq: dlq}
-	log.Info("started", "brokers", brokers, "topic", events.TopicRawGitHub, "group", group)
+	log.Info("started", "brokers", brokers, "topic", events.TopicEnrichedGitHub, "group", group)
 
 	var attempt int
 	for {
@@ -468,7 +472,7 @@ func hashIdentifier(value string) string {
 }
 
 func workItemPayload(wi connector.WorkItem) map[string]any {
-	return map[string]any{
+	p := map[string]any{
 		"type":          wi.Type,
 		"repo":          wi.Repo,
 		"node_id":       wi.NodeID,
@@ -478,7 +482,19 @@ func workItemPayload(wi connector.WorkItem) map[string]any {
 		"current_stage": wi.CurrentStage,
 		"author_login":  wi.AuthorLogin,
 		"changed_files": wi.ChangedFiles,
+		"additions":     wi.Additions,
+		"deletions":     wi.Deletions,
 	}
+	// Enriched detail (P1.C) rides in the canonical payload, not work_item columns:
+	// commit_oids drive PR↔commit correlation (P1.E), files drive review-health
+	// hotspots and Phase-3 semantic analysis. Omitted when the event wasn't enriched.
+	if len(wi.CommitOIDs) > 0 {
+		p["commit_oids"] = wi.CommitOIDs
+	}
+	if len(wi.Files) > 0 {
+		p["files"] = wi.Files
+	}
+	return p
 }
 
 func reviewPayload(rv connector.Review) map[string]any {
