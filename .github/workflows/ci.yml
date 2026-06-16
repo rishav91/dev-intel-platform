@@ -18,11 +18,18 @@ jobs:
           --health-cmd "pg_isready -U devintel -d devintel"
           --health-interval 5s --health-timeout 5s --health-retries 10
     env:
-      POSTGRES_DSN: postgres://devintel:devintel@localhost:5432/devintel
+      # Default connection for tests is the least-privilege app role
+      # (NOSUPERUSER/NOBYPASSRLS) so the red-team RLS gate actually engages.
+      # Connecting as the superuser `devintel` BYPASSES RLS (even with FORCE),
+      # which silently let every tenant see every row — the CI leak this fixes.
+      POSTGRES_DSN: postgres://devintel_app:devintel_app@localhost:5432/devintel
+      # Superuser connection — only for applying migrations (CREATE ROLE/tables/etc.,
+      # which the app role intentionally cannot do).
+      POSTGRES_SUPERUSER_DSN: postgres://devintel:devintel@localhost:5432/devintel
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
-        with: { go-version: "1.22" }
+        with: { go-version: "1.24" }
 
       - name: Build
         run: go build ./...
@@ -34,7 +41,7 @@ jobs:
           sudo apt-get update && sudo apt-get install -y postgresql-client
           for f in db/migrations/*.sql; do
             echo "applying $f"
-            psql "$POSTGRES_DSN" -v ON_ERROR_STOP=1 -f "$f"
+            psql "$POSTGRES_SUPERUSER_DSN" -v ON_ERROR_STOP=1 -f "$f"
           done
 
       # Red-team isolation gate: tenant RLS must hold. A failure blocks merge.
