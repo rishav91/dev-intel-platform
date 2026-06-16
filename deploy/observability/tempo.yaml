@@ -1,0 +1,32 @@
+# Grafana Tempo — local trace store for the dev stack. Receives spans over OTLP
+# (the host-run Go services export to localhost:4318) and serves them to Grafana.
+# Single-binary, local filesystem storage; not for production.
+server:
+  http_listen_port: 3200
+
+distributor:
+  receivers:
+    otlp:
+      protocols:
+        http:
+          endpoint: 0.0.0.0:4318
+        grpc:
+          endpoint: 0.0.0.0:4317
+
+ingester:
+  max_block_duration: 5m
+
+compactor:
+  compaction:
+    block_retention: 24h # dev: keep a day of traces
+
+storage:
+  trace:
+    backend: local
+    local:
+      path: /var/tempo/blocks
+    wal:
+      path: /var/tempo/wal
+
+usage_report:
+  reporting_enabled: false

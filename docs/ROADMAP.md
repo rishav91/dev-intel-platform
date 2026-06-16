@@ -27,6 +27,8 @@ Full system, sequenced so the **P0 slice is a coherent first product**. Each pha
 - Projection workers → ClickHouse + Postgres read views + OpenSearch.
 - **Flow/bottleneck**, **recurring blockers**, **code-review health**, **CI reliability** projections with drill-down.
 - GraphQL BFF + role-tailored dashboards (portfolio/team/individual); capability-gated fields return null+reason.
+- **Web client** (`apps/web/`, Vite+React SPA) — onboarding, the four pillar dashboards, and the
+  work-item evidence/drill-down hub over the BFF. See `FRONTEND.md` (FE-0). Built here, not earlier.
 - Redis caching + invalidation; projection rebuild tooling.
 **Exit:** dashboards show the four pillars with drill-down; a read model can be dropped and replayed. (FR-4.1–4.5, FR-9.1, NFR-8.3, NFR-8.7)
 
