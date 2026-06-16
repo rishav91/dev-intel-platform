@@ -2,7 +2,13 @@
 // of any application filter. This test is the gate that locks isolation in early
 // (REPO-LAYOUT suggested command #3). It is skipped unless POSTGRES_DSN is set.
 //
-//	POSTGRES_DSN=postgres://devintel:devintel@localhost:5432/devintel go test ./tests/red-team/...
+// IMPORTANT: connect as the least-privilege app role (devintel_app), NOT the
+// superuser/owner. Superusers — and BYPASSRLS roles — bypass RLS entirely, even
+// with FORCE ROW LEVEL SECURITY, so the test would falsely "leak". Use:
+//
+//	POSTGRES_DSN=postgres://devintel_app:devintel_app@localhost:5432/devintel go test ./tests/red-team/...
+//
+// or just `make test-isolation`, which sets this DSN for you.
 package redteam
 
 import (
